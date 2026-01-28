@@ -8,7 +8,7 @@
     <artifactId>travel-match-backend</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>travel-match-backend</name>
-    <description>Travel route planning & companion platform backend</description>
+    <description>Travel route planning  companion platform backend</description>
     <packaging>jar</packaging>
 
     <parent>
@@ -23,6 +23,25 @@
     </properties>
 
     <dependencies>
+        <!-- JWT -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>0.11.5</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>0.11.5</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>0.11.5</version>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Web & JSON -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -82,6 +101,14 @@
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <release>17</release>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

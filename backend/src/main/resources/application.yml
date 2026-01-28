@@ -6,12 +6,13 @@ spring:
     name: travel-match-backend
 
   datasource:
-    url: jdbc:mysql://localhost:3306/travel_match?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8
+    url: jdbc:mysql://localhost:3306/travel_match?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8&allowPublicKeyRetrieval=true
     username: root
-    password: root
+    password: .1.2.huchao
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect
     hibernate:
       ddl-auto: update
     show-sql: true

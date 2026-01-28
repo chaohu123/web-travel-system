@@ -1,175 +1,97 @@
 <script setup lang="ts">
+import HeaderNav from './components/HeaderNav.vue'
 </script>
 
 <template>
-  <div class="app">
-    <header class="app-header">
-      <div class="logo">TravelMatch</div>
-      <nav class="nav">
-        <a href="#">路线规划</a>
-        <a href="#">旅友结伴</a>
-        <a href="#">游记社区</a>
-        <a href="#">个人中心</a>
-      </nav>
-      <div class="auth">
-        <button class="btn primary">登录</button>
-        <button class="btn ghost">注册</button>
-      </div>
-    </header>
-    <main class="app-main">
-      <section class="hero">
-        <h1>个性化旅游路线规划 &amp; 旅友结伴平台</h1>
-        <p>根据你的兴趣与预算，一键生成智能行程，并找到志同道合的旅伴。</p>
-        <div class="hero-actions">
-          <button class="btn primary">开始规划行程</button>
-          <button class="btn ghost">浏览结伴信息</button>
-        </div>
-      </section>
+  <div class="app-root">
+    <HeaderNav />
+    <main class="page-main">
+      <router-view />
     </main>
+    <footer class="site-footer">
+      <div class="footer-top">
+        <div class="footer-top-inner">
+          <div>
+            <h3>关于 TravelMatch</h3>
+            <p>
+              TravelMatch 是面向年轻人的智能旅行助手，集路线规划、结伴找伴与社区分享于一体，
+              为用户提供从灵感获取、行程设计到旅友匹配的完整体验，适合作为毕业设计展示的前端项目。
+            </p>
+          </div>
+          <div>
+            <h3>联系我们</h3>
+            <p>邮箱：contact@travelmatch.com</p>
+            <p>合作：biz@travelmatch.com</p>
+          </div>
+          <div>
+            <h3>友情链接</h3>
+            <p>旅游局官网 · 航空公司 · 酒店合作平台</p>
+          </div>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        © {{ new Date().getFullYear() }} TravelMatch 个性化旅游路线规划与旅友结伴平台
+      </div>
+    </footer>
   </div>
 </template>
 
 <style scoped>
-.app {
+.app-root {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(135deg, #f3f7ff, #eef9ff);
-  color: #1f2933;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-.app-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 40px;
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-
-.logo {
-  font-weight: 800;
-  font-size: 20px;
-  letter-spacing: 0.06em;
-  color: #2563eb;
-}
-
-.nav {
-  display: flex;
-  gap: 24px;
-  font-size: 14px;
-}
-
-.nav a {
-  color: #4b5563;
-  text-decoration: none;
-  position: relative;
-  padding-bottom: 4px;
-}
-
-.nav a::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  width: 0;
-  height: 2px;
-  background: linear-gradient(90deg, #2563eb, #22c55e);
-  transition: width 0.2s ease;
-}
-
-.nav a:hover::after {
-  width: 100%;
-}
-
-.auth {
-  display: flex;
-  gap: 8px;
-}
-
-.btn {
-  padding: 8px 16px;
-  border-radius: 999px;
-  border: none;
-  cursor: pointer;
-  font-size: 14px;
-  transition: all 0.2s ease;
-}
-
-.btn.primary {
-  background: linear-gradient(135deg, #2563eb, #22c55e);
-  color: #fff;
-  box-shadow: 0 8px 16px rgba(37, 99, 235, 0.25);
-}
-
-.btn.primary:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.35);
-}
-
-.btn.ghost {
-  background: transparent;
-  border: 1px solid #d1d5db;
-  color: #4b5563;
-}
-
-.btn.ghost:hover {
-  background: #f3f4f6;
-}
-
-.app-main {
+.page-main {
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 64px 24px;
 }
 
-.hero {
-  max-width: 720px;
-  text-align: center;
+.site-footer {
+  margin-top: 24px;
+  background: #020617;
+  color: #e5e7eb;
+  font-size: 13px;
 }
 
-.hero h1 {
-  font-size: 36px;
-  line-height: 1.2;
-  margin-bottom: 16px;
-  color: #111827;
+.footer-top {
+  border-top: 1px solid #0f172a;
+  border-bottom: 1px solid #0f172a;
 }
 
-.hero p {
+.footer-top-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 16px 28px;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1.4fr);
+  gap: 20px;
+}
+
+.footer-top-inner h3 {
+  margin: 0 0 8px;
   font-size: 16px;
-  color: #6b7280;
-  margin-bottom: 24px;
+  font-weight: 600;
+  color: #f9fafb;
 }
 
-.hero-actions {
-  display: flex;
-  justify-content: center;
-  gap: 16px;
+.footer-top-inner p {
+  margin: 0 0 4px;
+  line-height: 1.6;
+}
+
+.footer-bottom {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 10px 16px 14px;
+  text-align: center;
+  font-size: 12px;
+  color: #9ca3af;
 }
 
 @media (max-width: 768px) {
-  .app-header {
-    padding: 12px 16px;
-  }
-
-  .nav {
-    display: none;
-  }
-
-  .hero h1 {
-    font-size: 26px;
-  }
-
-  .hero-actions {
-    flex-direction: column;
+  .footer-top-inner {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>
-
