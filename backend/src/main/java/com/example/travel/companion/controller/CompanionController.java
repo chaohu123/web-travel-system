@@ -28,6 +28,11 @@ public class CompanionController {
         return ApiResponse.success(companionService.search(request));
     }
 
+    @GetMapping("/posts/recommend")
+    public ApiResponse<List<CompanionDtos.PostSummary>> recommend(@RequestParam(defaultValue = "3") int limit) {
+        return ApiResponse.success(companionService.recommend(limit));
+    }
+
     @GetMapping("/posts/my")
     public ApiResponse<List<CompanionDtos.PostSummary>> myPosts() {
         return ApiResponse.success(companionService.myPosts());

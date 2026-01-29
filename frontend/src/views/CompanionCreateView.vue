@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api } from '../api'
+import { api, routesApi } from '../api'
 
 interface MyPlanOption {
   id: number
@@ -28,8 +28,8 @@ const router = useRouter()
 
 const fetchMyPlans = async () => {
   try {
-    const resp = await api.get('/api/routes/my')
-    myPlans.value = resp.data.data || []
+    const list = await routesApi.myPlans()
+    myPlans.value = list || []
   } catch {
     myPlans.value = []
   }
@@ -43,7 +43,7 @@ const onSubmit = async () => {
   loading.value = true
   errorMsg.value = ''
   try {
-    await api.post('/api/companion/posts', {
+    await api.post('/companion/posts', {
       relatedPlanId: relatedPlanId.value || undefined,
       destination: destination.value,
       startDate: startDate.value,

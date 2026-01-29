@@ -8,6 +8,9 @@ import com.example.travel.user.entity.UserPreference;
 import com.example.travel.user.entity.UserProfile;
 import com.example.travel.user.entity.UserReputation;
 import com.example.travel.user.repository.UserRepository;
+import com.example.travel.user.repository.UserProfileRepository;
+import com.example.travel.user.repository.UserPreferenceRepository;
+import com.example.travel.user.repository.UserReputationRepository;
 import jakarta.transaction.Transactional;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -20,13 +23,22 @@ import org.springframework.util.StringUtils;
 public class AuthService {
 
     private final UserRepository userRepository;
+    private final UserProfileRepository userProfileRepository;
+    private final UserPreferenceRepository userPreferenceRepository;
+    private final UserReputationRepository userReputationRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
 
     public AuthService(UserRepository userRepository,
+                       UserProfileRepository userProfileRepository,
+                       UserPreferenceRepository userPreferenceRepository,
+                       UserReputationRepository userReputationRepository,
                        PasswordEncoder passwordEncoder,
                        AuthenticationManager authenticationManager) {
         this.userRepository = userRepository;
+        this.userProfileRepository = userProfileRepository;
+        this.userPreferenceRepository = userPreferenceRepository;
+        this.userReputationRepository = userReputationRepository;
         this.passwordEncoder = passwordEncoder;
         this.authenticationManager = authenticationManager;
     }
@@ -49,27 +61,32 @@ public class AuthService {
         User user = new User();
         user.setEmail(request.getEmail());
         user.setPhone(request.getPhone());
-        user.setPassword(passwordEncoder.encode(request.getPassword()));
+        // 使用 BCrypt 加密密码
+        String encodedPassword = passwordEncoder.encode(request.getPassword());
+        user.setPassword(encodedPassword);
         user.setAuthProvider("local");
 
-        userRepository.save(user);
+        user = userRepository.saveAndFlush(user); // 使用 saveAndFlush 确保 id 立即生成
 
-        // 关联资料 / 偏好 / 信誉，先用空数据占位，后续可补充
+        // 保存关联资料（使用 @MapsId，只需设置 user，id 会自动从 user.getId() 获取）
         UserProfile profile = new UserProfile();
-        profile.setUser(user);
+        profile.setUser(user); // @MapsId 会自动设置 id = user.getId()
         profile.setNickname("旅人" + user.getId());
+        userProfileRepository.save(profile);
 
+        // 保存偏好设置
         UserPreference preference = new UserPreference();
-        preference.setUser(user);
+        preference.setUser(user); // @MapsId 会自动设置 id = user.getId()
+        userPreferenceRepository.save(preference);
 
+        // 保存信誉信息
         UserReputation reputation = new UserReputation();
-        reputation.setUser(user);
+        reputation.setUser(user); // @MapsId 会自动设置 id = user.getId()
         reputation.setScore(0);
         reputation.setLevel(1);
         reputation.setTotalTrips(0);
         reputation.setPositiveCount(0);
-
-        // 这里为了简单先不单独建 repository，后续根据需要拆分
+        userReputationRepository.save(reputation);
     }
 
     public AuthDtos.LoginResponse login(AuthDtos.LoginRequest request) {

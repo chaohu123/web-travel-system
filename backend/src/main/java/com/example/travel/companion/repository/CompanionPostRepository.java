@@ -14,5 +14,10 @@ public interface CompanionPostRepository extends JpaRepository<CompanionPost, Lo
     List<CompanionPost> findByDestinationContainingAndStartDateGreaterThanEqualAndEndDateLessThanEqual(
             String destination, LocalDate startDate, LocalDate endDate
     );
+
+    /** 公开结伴帖按创建时间倒序，取前若干条（用于推荐无结果时的兜底） */
+    List<CompanionPost> findTop20ByVisibilityOrderByCreatedAtDesc(String visibility);
+
+    List<CompanionPost> findByCreatorAndVisibilityOrderByCreatedAtDesc(User creator, String visibility);
 }
 

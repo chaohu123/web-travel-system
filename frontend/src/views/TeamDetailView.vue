@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../store'
-import { api } from '../api'
+import { api, commentsApi } from '../api'
 
 const auth = useAuthStore()
 
@@ -52,7 +52,7 @@ const fetchTeam = async () => {
   if (!id) return
   loading.value = true
   try {
-    const resp = await api.get(`/api/companion/teams/${id}`)
+    const resp = await api.get(`/companion/teams/${id}`)
     team.value = resp.data.data
   } catch (e: any) {
     errorMsg.value = e.response?.data?.message || '加载小队信息失败'
@@ -70,10 +70,7 @@ const fetchComments = async () => {
   if (!team.value) return
   loadingComments.value = true
   try {
-    const resp = await api.get('/api/comments', {
-      params: { targetType: 'companion_team', targetId: team.value.id },
-    })
-    comments.value = resp.data.data || []
+    comments.value = await commentsApi.list('companion_team', team.value.id)
   } finally {
     loadingComments.value = false
   }
@@ -97,7 +94,7 @@ const submitComment = async () => {
   postingComment.value = true
   commentError.value = ''
   try {
-    await api.post('/api/comments', {
+    await commentsApi.create({
       targetType: 'companion_team',
       targetId: team.value.id,
       content: newContent.value,

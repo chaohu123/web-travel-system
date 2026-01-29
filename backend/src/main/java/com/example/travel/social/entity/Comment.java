@@ -34,6 +34,9 @@ public class Comment {
 
     private Integer score; // 可选评分 1-5
 
+    @Column(length = 256)
+    private String tags; // 评价标签(逗号分隔，如 守时,好沟通,靠谱)
+
     private LocalDateTime createdAt;
 
     @PrePersist

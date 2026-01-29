@@ -17,6 +17,9 @@ import NoteDetailView from '../views/NoteDetailView.vue'
 import FeedView from '../views/FeedView.vue'
 import CommunityView from '../views/CommunityView.vue'
 import ProfileView from '../views/ProfileView.vue'
+import UserProfileView from '../views/UserProfileView.vue'
+import ChatView from '../views/ChatView.vue'
+import MessageCenterView from '../views/MessageCenterView.vue'
 import { useAuthStore } from '../store'
 
 const routes: RouteRecordRaw[] = [
@@ -27,16 +30,20 @@ const routes: RouteRecordRaw[] = [
   { path: '/routes/create', name: 'route-create', component: RoutePlanningView },
   { path: '/routes/:id', name: 'route-detail', component: RouteDetailView },
   { path: '/spots/:id', name: 'spot-detail', component: SpotDetailView },
+  { path: '/users/:id', name: 'user-profile', component: UserProfileView },
+  { path: '/chat/:id', name: 'chat', component: ChatView },
   { path: '/companion', name: 'companion-list', component: CompanionListView },
   { path: '/companion/create', name: 'companion-create', component: CompanionCreateView },
   { path: '/companion/:id', name: 'companion-detail', component: CompanionDetailView },
   { path: '/teams/:id', name: 'team-detail', component: TeamDetailView },
   { path: '/notes', name: 'notes', component: NotesListView },
   { path: '/notes/create', name: 'note-create', component: NoteCreateView },
+  { path: '/notes/:id/edit', name: 'note-edit', component: NoteCreateView },
   { path: '/notes/:id', name: 'note-detail', component: NoteDetailView },
   { path: '/feed', name: 'feed', component: FeedView },
   { path: '/community', name: 'community', component: CommunityView },
   { path: '/profile', name: 'profile', component: ProfileView, meta: { requiresAuth: true } },
+  { path: '/messages', name: 'messages', component: MessageCenterView, meta: { requiresAuth: true } },
 ]
 
 export const router = createRouter({
@@ -46,10 +53,12 @@ export const router = createRouter({
 
 // 仅对「必须登录才能访问」的页面做路由守卫：创建类、个人中心。浏览类页面（首页/结伴列表/详情/社区/游记/路线列表等）可不登录访问。
 const protectedPaths = ['/routes/create', '/companion/create', '/notes/create', '/profile']
+const protectedPathPatterns = [/^\/notes\/\d+\/edit$/]
 
 router.beforeEach((to, _from, next) => {
   const auth = useAuthStore()
-  if (!auth.token && protectedPaths.includes(to.path) && to.name !== 'login') {
+  const isProtectedPath = protectedPaths.includes(to.path) || protectedPathPatterns.some(pattern => pattern.test(to.path))
+  if (!auth.token && isProtectedPath && to.name !== 'login') {
     next({ name: 'login', query: { redirect: to.fullPath } })
   } else {
     next()

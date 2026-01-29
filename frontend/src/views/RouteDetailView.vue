@@ -1,19 +1,34 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import * as echarts from 'echarts'
-import { routesApi, commentsApi } from '../api'
+import { ArrowLeft } from '@element-plus/icons-vue'
+import { routesApi, commentsApi, interactionsApi } from '../api'
+import { useAuthStore } from '../store'
 import type { CommentItem, PlanResponse, TripPlanDay, TripPlanActivity } from '../api'
+import { loadAmapScript, initAmapMap, addMarker, addPolyline, geocode } from '../utils/amap'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
+
+// 返回上一页
+function goBack() {
+  if (window.history.length > 1) {
+    router.go(-1)
+  } else {
+    router.push('/')
+  }
+}
 
 const loading = ref(true)
 const plan = ref<PlanResponse | null>(null)
 
-// 操作状态（本地模拟，可接入后端）
+
+// 操作状态：收藏 / 点赞
 const isFavorited = ref(false)
+const isLiked = ref(false)
+const likeCount = ref(0)
 const actionLoading = ref(false)
 
 // 行程折叠 & 移动端 tabs
@@ -100,12 +115,24 @@ async function fetchDetail() {
   if (!planId.value) return
   loading.value = true
   try {
+    // 从后端获取真实路线详情（包含每天行程点及其经纬度）
     plan.value = await routesApi.getOne(planId.value)
     if (plan.value?.days?.length) {
-      activeAccordion.value = `day-${plan.value.days[0].dayIndex}`
+      const firstDayIndex = plan.value.days[0].dayIndex
+      // 默认高亮并展开第 1 天，使右侧地图只展示对应天的折线与点位
+      activeAccordion.value = `day-${firstDayIndex}`
+      activeDayHighlight.value = firstDayIndex
     }
-  } catch {
-    plan.value = null
+    // 调试：输出后端返回的经纬度，便于联调
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line no-console
+      console.debug('[RouteDetail] plan days from backend:', plan.value.days)
+    }
+  } catch (error) {
+    // API调用失败，如果仍然没有数据，设置为null
+    if (!plan.value) {
+      plan.value = null
+    }
   } finally {
     loading.value = false
   }
@@ -124,12 +151,59 @@ async function fetchComments() {
   }
 }
 
+async function fetchInteractions() {
+  if (!planId.value) return
+  try {
+    const summary = await interactionsApi.summary('route', planId.value)
+    likeCount.value = summary.likeCount ?? 0
+    isLiked.value = !!summary.likedByCurrentUser
+    isFavorited.value = !!summary.favoritedByCurrentUser
+  } catch {
+    likeCount.value = 0
+  }
+}
+
+function ensureLogin() {
+  if (!auth.token) {
+    router.push({ name: 'login', query: { redirect: route.fullPath } })
+    return false
+  }
+  return true
+}
+
 async function toggleFavorite() {
+  if (!ensureLogin()) return
   if (actionLoading.value) return
   actionLoading.value = true
   try {
-    isFavorited.value = !isFavorited.value
-    ElMessage.success(isFavorited.value ? '已收藏路线' : '已取消收藏')
+    if (isFavorited.value) {
+      await interactionsApi.unfavorite('route', planId.value)
+      isFavorited.value = false
+      ElMessage.success('已取消收藏')
+    } else {
+      await interactionsApi.favorite('route', planId.value)
+      isFavorited.value = true
+      ElMessage.success('已收藏路线')
+    }
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function toggleLike() {
+  if (!ensureLogin()) return
+  if (actionLoading.value) return
+  actionLoading.value = true
+  try {
+    if (isLiked.value) {
+      await interactionsApi.unlike('route', planId.value)
+      isLiked.value = false
+      likeCount.value = Math.max(0, likeCount.value - 1)
+    } else {
+      await interactionsApi.like('route', planId.value)
+      isLiked.value = true
+      likeCount.value += 1
+    }
   } finally {
     actionLoading.value = false
   }
@@ -182,114 +256,251 @@ function spotIdFromName(name?: string): number {
 function goSpot(act: TripPlanActivity) {
   const id = spotIdFromName(act.name)
   if (!id) return
-  router.push(`/spots/${id}`)
+  router.push({
+    path: `/spots/${id}`,
+    query: {
+      name: act.name || '',
+      location: act.location || '',
+      fromRouteId: String(planId.value || ''),
+    },
+  })
 }
 
-// 地图：ECharts 轨迹示意（可替换为高德/百度）
+// 地图：高德地图
 const mapRef = ref<HTMLDivElement | null>(null)
-let chart: echarts.ECharts | null = null
+let amapInstance: any = null
+const markers: any[] = []
+const polylines: any[] = []
+// 当前高亮/展示的 day（点击 Day N 或悬停某行程时设置）
 const activeDayHighlight = ref<number | null>(null)
 
-function buildMapSeries(days: TripPlanDay[]) {
-  const palette = ['#22c55e', '#06b6d4', '#6366f1', '#f59e0b', '#ef4444', '#a855f7']
-  const series = days.map((d, i) => {
-    const color = palette[i % palette.length]
-    const points = (d.activities || []).map((a, idx) => ({
-      name: a.name || `POI ${idx + 1}`,
-      value: [idx, i * 10 + 6],
-      dayIndex: d.dayIndex,
-      location: a.location || '',
-      transport: a.transport || '',
-      cost: a.estimatedCost ?? null,
-    }))
-    return {
-      name: `Day ${d.dayIndex}`,
-      type: 'line',
-      smooth: true,
-      symbol: 'circle',
-      symbolSize: (val: any) => (activeDayHighlight.value === null || activeDayHighlight.value === d.dayIndex ? 10 : 6),
-      lineStyle: {
-        width: activeDayHighlight.value === null || activeDayHighlight.value === d.dayIndex ? 3 : 1,
-        opacity: activeDayHighlight.value === null || activeDayHighlight.value === d.dayIndex ? 1 : 0.25,
-        color,
-      },
-      itemStyle: {
-        color,
-        opacity: activeDayHighlight.value === null || activeDayHighlight.value === d.dayIndex ? 1 : 0.25,
-      },
-      data: points.map((p: any) => p.value),
-      __points: points,
-    } as any
-  })
-  return series
-}
-
-function initMap() {
+// 初始化高德地图
+async function initMap() {
   const days = plan.value?.days || []
-  if (!mapRef.value || !days.length) return
-  if (!chart) chart = echarts.init(mapRef.value)
+  const container = mapRef.value
+  if (!container || !days.length) return
 
-  const maxPoiPerDay = Math.max(...days.map((d) => (d.activities?.length || 1)))
+  try {
+    await loadAmapScript()
 
-  const series = buildMapSeries(days)
+    // 等待地图容器真正有尺寸，避免 0x0 导致黑屏或异常
+    const waitForSize = async (el: HTMLElement, maxFrames = 30) => {
+      for (let i = 0; i < maxFrames; i++) {
+        const rect = el.getBoundingClientRect()
+        if (rect.width > 0 && rect.height > 0) return
+        await new Promise<void>((r) => requestAnimationFrame(() => r()))
+      }
+    }
+    await waitForSize(container)
 
-  chart.setOption({
-    backgroundColor: '#020617',
-    grid: { left: 18, right: 18, top: 40, bottom: 40 },
-    tooltip: {
-      trigger: 'item',
-      backgroundColor: 'rgba(15,23,42,0.92)',
-      borderColor: '#334155',
-      textStyle: { color: '#e5e7eb' },
-      formatter: (params: any) => {
-        const s = series[params.seriesIndex] as any
-        const p = s.__points?.[params.dataIndex]
-        if (!p) return ''
-        return [
-          `<b>${p.name}</b>`,
-          `Day ${p.dayIndex}`,
-          p.location ? `位置：${p.location}` : '',
-          p.transport ? `交通：${p.transport}` : '',
-          p.cost != null ? `费用：约 ${p.cost} 元` : '',
-        ].filter(Boolean).join('<br/>')
-      },
-    },
-    xAxis: {
-      type: 'value',
-      min: -0.5,
-      max: Math.max(3, maxPoiPerDay) - 0.5,
-      axisLabel: { color: '#cbd5f5' },
-      splitLine: { lineStyle: { color: '#0f172a' } },
-    },
-    yAxis: {
-      type: 'value',
-      axisLabel: { show: false },
-      splitLine: { show: false },
-    },
-    series,
-  })
+    // 如有历史标记和折线，先从地图上移除，避免叠加
+    if (amapInstance) {
+      try {
+        if (markers.length) {
+          amapInstance.remove(markers)
+        }
+        if (polylines.length) {
+          amapInstance.remove(polylines)
+        }
+      } catch {
+        // ignore
+      }
+      markers.length = 0
+      polylines.length = 0
+    }
+
+    // 构建“地址/名称 → 坐标”的映射：
+    // 1. 优先使用后端返回的 lng/lat（真实坐标）
+    // 2. 若某些点缺失 lng/lat，再退回到地理编码
+    const coordsMap = new Map<string, [number, number]>()
+    const needGeocode: string[] = []
+
+    days.forEach((day) => {
+      day.activities?.forEach((act) => {
+        const key = (act.location || act.name || '').trim()
+        if (!key || coordsMap.has(key)) return
+
+        const lng = (act as any).lng
+        const lat = (act as any).lat
+        if (typeof lng === 'number' && typeof lat === 'number' && !Number.isNaN(lng) && !Number.isNaN(lat)) {
+          coordsMap.set(key, [lng, lat])
+        } else {
+          needGeocode.push(key)
+        }
+      })
+    })
+
+    for (const addr of needGeocode) {
+      if (coordsMap.has(addr)) continue
+      const coords = await geocode(addr)
+      if (coords) {
+        coordsMap.set(addr, coords)
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 100))
+    }
+
+    // 初始化地图，使用第一个有效坐标作为中心点
+    let center: [number, number] = [116.397428, 39.90923] // 默认北京
+    const firstCoords = Array.from(coordsMap.values())[0]
+    if (firstCoords) {
+      center = firstCoords
+    }
+
+    amapInstance = initAmapMap(container, center, 12, {
+      viewMode: '2D',
+      mapStyle: 'amap://styles/normal',
+      forceTileLayer: true,
+    })
+
+    // 按天绘制路线
+    const palette = ['#22c55e', '#06b6d4', '#6366f1', '#f59e0b', '#ef4444', '#a855f7']
+
+    days.forEach((day, dayIdx) => {
+      // 如果设置了高亮 day，只绘制该天的路线与点位
+      if (activeDayHighlight.value != null && day.dayIndex !== activeDayHighlight.value) {
+        return
+      }
+      const dayActivities = day.activities || []
+      const dayPath: [number, number][] = []
+      // 为避免同一经纬度的多个景点完全重叠，这里对相同坐标做轻微偏移（仅用于可视化）
+      const coordRepeatMap = new Map<string, number>()
+
+      dayActivities.forEach((act, idx) => {
+        const key = (act.location || act.name || '').trim()
+        if (!key) return
+        const coords = coordsMap.get(key)
+        if (!coords) return
+
+        const repeatKey = `${coords[0].toFixed(6)}_${coords[1].toFixed(6)}`
+        const usedCount = (coordRepeatMap.get(repeatKey) ?? 0) + 1
+        coordRepeatMap.set(repeatKey, usedCount)
+
+        // 第一个点使用原始坐标，其余点按圆形轻微散开（约数百米级别，不影响整体城市范围）
+        let finalCoords: [number, number] = coords
+        if (usedCount > 1) {
+          const angle = ((usedCount - 1) * 2 * Math.PI) / 6
+          const radius = 0.002 // 经纬度偏移，大约几百米
+          finalCoords = [coords[0] + radius * Math.cos(angle), coords[1] + radius * Math.sin(angle)]
+        }
+
+        dayPath.push(finalCoords)
+
+        // 添加标记点
+        const color = palette[dayIdx % palette.length]
+        const orderLabel = `D${idx + 1}`
+        const marker = addMarker(
+          amapInstance,
+          finalCoords,
+          act.name || '景点',
+          [
+            `<b>${act.name || '景点'}</b>`,
+            `Day ${day.dayIndex}`,
+            act.location ? `位置：${act.location}` : '',
+            act.transport ? `交通：${act.transport}` : '',
+            act.estimatedCost != null ? `费用：约 ${act.estimatedCost} 元` : '',
+          ]
+            .filter(Boolean)
+            .join('<br/>')
+        )
+
+        // 设置标记样式（彩色圆点）
+        marker.setIcon(
+          new window.AMap.Icon({
+            size: new window.AMap.Size(16, 16),
+            image: `data:image/svg+xml;base64,${btoa(
+              `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+                <circle cx="8" cy="8" r="7" fill="${color}" stroke="#ffffff" stroke-width="2" />
+              </svg>`
+            )}`,
+            imageOffset: new window.AMap.Pixel(-8, -8),
+          })
+        )
+
+        // 在图标上方叠加 D1/D2/D3 文字标签，保证在任何缩放级别都清晰可见
+        marker.setLabel({
+          direction: 'top',
+          offset: new window.AMap.Pixel(0, -18),
+          content: `<div style="
+            padding: 2px 6px;
+            border-radius: 999px;
+            background: rgba(15,23,42,0.9);
+            color: #f9fafb;
+            font-size: 11px;
+            line-height: 1;
+            white-space: nowrap;
+          ">${orderLabel}</div>`,
+        })
+
+        markers.push(marker)
+      })
+
+      // 绘制路线
+      if (dayPath.length > 1) {
+        const color = palette[dayIdx % palette.length]
+        const polyline = addPolyline(amapInstance, dayPath, color)
+        polylines.push(polyline)
+      }
+    })
+
+    // 调整地图视野以包含所有标记
+    amapInstance.on('complete', () => {
+      try {
+        if (markers.length > 0) {
+          amapInstance.setFitView(markers)
+        }
+        amapInstance.resize()
+      } catch {}
+    })
+  } catch (error) {
+    console.error('初始化地图失败:', error)
+    ElMessage.warning('地图加载失败，请检查高德地图API配置')
+  }
 }
 
 function resizeMap() {
-  chart?.resize()
+  // 调整地图尺寸以适配容器变化
+  try {
+    amapInstance?.resize?.()
+  } catch {
+    // ignore
+  }
 }
 
 onMounted(async () => {
   await fetchDetail()
   await fetchComments()
-  initMap()
+  // 等待DOM更新后再初始化地图
+  await nextTick()
+  // 初始化地图（内部会处理高德地图API加载）
+  try {
+    await initMap()
+  } catch (error) {
+    console.warn('高德地图加载失败:', error)
+    ElMessage.warning('地图加载失败，请检查高德地图API配置')
+  }
   window.addEventListener('resize', resizeMap)
+  await fetchInteractions()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', resizeMap)
-  chart?.dispose()
-  chart = null
+  // 清理高德地图实例
+  if (amapInstance) {
+    amapInstance.destroy()
+    amapInstance = null
+  }
+  markers.length = 0
+  polylines.length = 0
 })
 </script>
 
 <template>
   <div class="route-detail-page">
+    <!-- 返回按钮 -->
+    <div class="back-button-container">
+      <el-button :icon="ArrowLeft" circle @click="goBack" class="back-button" />
+    </div>
+
     <div v-if="loading" class="loading-wrap text-subtle">加载中…</div>
 
     <template v-else-if="plan">
@@ -335,6 +546,9 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="actions">
+              <el-button :loading="actionLoading" :type="isLiked ? 'success' : 'primary'" @click="toggleLike">
+                {{ isLiked ? '已点赞' : '点赞' }} · {{ likeCount }}
+              </el-button>
               <el-button :loading="actionLoading" :type="isFavorited ? 'success' : 'primary'" @click="toggleFavorite">
                 {{ isFavorited ? '已收藏' : '收藏路线' }}
               </el-button>
@@ -397,7 +611,14 @@ onBeforeUnmount(() => {
               :name="`day-${day.dayIndex}`"
             >
               <template #title>
-                <div class="day-title">
+                <div
+                  class="day-title"
+                  @click.stop="
+                    activeAccordion = `day-${day.dayIndex}`;
+                    activeDayHighlight = day.dayIndex;
+                    initMap();
+                  "
+                >
                   <span class="day-badge">Day {{ day.dayIndex }}</span>
                   <span class="day-date">{{ day.date }}</span>
                   <span class="day-meta">{{ day.activities?.length || 0 }} 个景点</span>
@@ -451,7 +672,7 @@ onBeforeUnmount(() => {
           <div class="map-card">
             <div ref="mapRef" class="map-canvas" />
             <div class="map-hint">
-              提示：点击折线节点可查看景点信息；将来可替换为高德/百度地图以显示真实轨迹与 Marker。
+              提示：点击标记点可查看景点详细信息；地图使用高德地图API展示真实地理位置。
             </div>
           </div>
         </div>
@@ -524,6 +745,40 @@ onBeforeUnmount(() => {
     radial-gradient(circle at bottom right, #fef3c7 0, transparent 55%),
     #f8fafc;
   padding: 20px 16px 40px;
+  position: relative;
+}
+
+.back-button-container {
+  position: fixed;
+  top: 80px;
+  left: 20px;
+  z-index: 100;
+}
+
+.back-button {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+  transition: all 0.2s ease;
+}
+
+.back-button:hover {
+  background: rgba(255, 255, 255, 1);
+  transform: translateX(-2px);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.2);
+}
+
+@media (max-width: 768px) {
+  .back-button-container {
+    top: 70px;
+    left: 12px;
+  }
+  
+  .back-button {
+    width: 36px;
+    height: 36px;
+  }
 }
 
 .loading-wrap,

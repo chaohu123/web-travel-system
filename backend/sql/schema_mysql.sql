@@ -60,6 +60,19 @@ CREATE TABLE `t_user_reputation` (
                                      CONSTRAINT `fk_user_rep_user` FOREIGN KEY (`id`) REFERENCES `t_user` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户信誉积分信息表';
 
+DROP TABLE IF EXISTS `t_user_follow`;
+CREATE TABLE `t_user_follow` (
+                                 `id`          BIGINT NOT NULL AUTO_INCREMENT COMMENT '关注关系ID',
+                                 `follower_id` BIGINT      NOT NULL COMMENT '关注发起方用户ID',
+                                 `followee_id` BIGINT      NOT NULL COMMENT '被关注用户ID',
+                                 `created_at`  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '关注时间',
+                                 PRIMARY KEY (`id`),
+                                 UNIQUE KEY `uk_follow_pair` (`follower_id`,`followee_id`),
+                                 KEY `idx_follow_followee` (`followee_id`),
+                                 CONSTRAINT `fk_follow_follower` FOREIGN KEY (`follower_id`) REFERENCES `t_user` (`id`) ON DELETE CASCADE,
+                                 CONSTRAINT `fk_follow_followee` FOREIGN KEY (`followee_id`) REFERENCES `t_user` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户关注关系表';
+
 ------------------------------------------------------------
 -- 行程规划相关表
 ------------------------------------------------------------
@@ -105,6 +118,8 @@ CREATE TABLE `t_trip_activity` (
                                    `end_time`       VARCHAR(32)     DEFAULT NULL COMMENT '预计结束时间(字符串)',
                                    `transport`      VARCHAR(64)     DEFAULT NULL COMMENT '交通方式(步行/地铁/出租车等)',
                                    `estimated_cost` INT             DEFAULT NULL COMMENT '预估花费(元)',
+                                   `lng`            DOUBLE          DEFAULT NULL COMMENT '经度',
+                                   `lat`            DOUBLE          DEFAULT NULL COMMENT '纬度',
                                    PRIMARY KEY (`id`),
                                    KEY `idx_activity_day` (`day_id`),
                                    CONSTRAINT `fk_trip_activity_day` FOREIGN KEY (`day_id`) REFERENCES `t_trip_day` (`id`) ON DELETE CASCADE
@@ -203,9 +218,94 @@ CREATE TABLE `t_comment` (
                              `target_id`   BIGINT      NOT NULL COMMENT '评论目标主键ID',
                              `content`     VARCHAR(512) NOT NULL COMMENT '评论内容',
                              `score`       INT              DEFAULT NULL COMMENT '可选评分(1-5)',
+                             `tags`        VARCHAR(256)     DEFAULT NULL COMMENT '评价标签(逗号分隔，如守时,好沟通,靠谱)',
                              `created_at`  DATETIME   NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                              PRIMARY KEY (`id`),
                              KEY `idx_comment_target` (`target_type`,`target_id`),
                              KEY `idx_comment_user` (`user_id`),
                              CONSTRAINT `fk_comment_user` FOREIGN KEY (`user_id`) REFERENCES `t_user` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通用评论/评分表';
+
+DROP TABLE IF EXISTS `t_content_like`;
+CREATE TABLE `t_content_like` (
+                                 `id`          BIGINT NOT NULL AUTO_INCREMENT COMMENT '点赞记录ID',
+                                 `user_id`     BIGINT      NOT NULL COMMENT '点赞用户ID',
+                                 `target_type` VARCHAR(32) NOT NULL COMMENT '目标类型: note/route/companion 等',
+                                 `target_id`   BIGINT      NOT NULL COMMENT '目标主键ID',
+                                 `created_at`  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '点赞时间',
+                                 PRIMARY KEY (`id`),
+                                 UNIQUE KEY `uk_like_user_target` (`user_id`,`target_type`,`target_id`),
+                                 KEY `idx_like_target` (`target_type`,`target_id`),
+                                 CONSTRAINT `fk_like_user` FOREIGN KEY (`user_id`) REFERENCES `t_user` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通用点赞表';
+
+DROP TABLE IF EXISTS `t_content_favorite`;
+CREATE TABLE `t_content_favorite` (
+                                     `id`          BIGINT NOT NULL AUTO_INCREMENT COMMENT '收藏记录ID',
+                                     `user_id`     BIGINT      NOT NULL COMMENT '收藏用户ID',
+                                     `target_type` VARCHAR(32) NOT NULL COMMENT '目标类型: note/route/companion 等',
+                                     `target_id`   BIGINT      NOT NULL COMMENT '目标主键ID',
+                                     `created_at`  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '收藏时间',
+                                     PRIMARY KEY (`id`),
+                                     UNIQUE KEY `uk_fav_user_target` (`user_id`,`target_type`,`target_id`),
+                                     KEY `idx_fav_target` (`target_type`,`target_id`),
+                                     CONSTRAINT `fk_fav_user` FOREIGN KEY (`user_id`) REFERENCES `t_user` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通用收藏表';
+
+------------------------------------------------------------
+-- 消息系统：互动消息 & 私信
+------------------------------------------------------------
+
+DROP TABLE IF EXISTS `t_interaction_message`;
+CREATE TABLE `t_interaction_message` (
+  `id`              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '消息ID',
+  `recipient_id`    BIGINT       NOT NULL COMMENT '接收者用户ID',
+  `from_user_id`    BIGINT       NOT NULL COMMENT '发起互动用户ID',
+  `type`            VARCHAR(16)  NOT NULL COMMENT '消息类型: LIKE/COMMENT',
+  `target_type`     VARCHAR(32)  NOT NULL COMMENT '目标类型: note/route',
+  `target_id`       BIGINT       NOT NULL COMMENT '目标主键ID',
+  `target_title`    VARCHAR(255)      DEFAULT NULL COMMENT '目标标题（冗余字段，便于展示）',
+  `content_preview` VARCHAR(512)      DEFAULT NULL COMMENT '评论内容预览（仅评论有值）',
+  `read`            TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否已读',
+  `created_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_msg_recipient_read` (`recipient_id`,`read`,`created_at`),
+  KEY `idx_msg_target` (`target_type`,`target_id`),
+  CONSTRAINT `fk_msg_recipient` FOREIGN KEY (`recipient_id`) REFERENCES `t_user` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_msg_from_user` FOREIGN KEY (`from_user_id`) REFERENCES `t_user` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='互动消息表';
+
+DROP TABLE IF EXISTS `t_private_conversation`;
+CREATE TABLE `t_private_conversation` (
+  `id`                   BIGINT       NOT NULL AUTO_INCREMENT COMMENT '会话ID',
+  `user1_id`             BIGINT       NOT NULL COMMENT '用户1 ID（较小的ID）',
+  `user2_id`             BIGINT       NOT NULL COMMENT '用户2 ID（较大的ID）',
+  `last_message_preview` VARCHAR(255)      DEFAULT NULL COMMENT '最后一条消息预览',
+  `last_message_time`    DATETIME          DEFAULT NULL COMMENT '最后一条消息时间',
+  `user1_unread_count`   INT          NOT NULL DEFAULT 0 COMMENT '用户1的未读数',
+  `user2_unread_count`   INT          NOT NULL DEFAULT 0 COMMENT '用户2的未读数',
+  `user1_pinned`         TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '用户1是否置顶',
+  `user2_pinned`         TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '用户2是否置顶',
+  `created_at`           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at`           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_conversation_pair` (`user1_id`,`user2_id`),
+  KEY `idx_conv_user1` (`user1_id`,`updated_at`),
+  KEY `idx_conv_user2` (`user2_id`,`updated_at`),
+  CONSTRAINT `fk_conv_user1` FOREIGN KEY (`user1_id`) REFERENCES `t_user` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_conv_user2` FOREIGN KEY (`user2_id`) REFERENCES `t_user` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='私信会话表';
+
+DROP TABLE IF EXISTS `t_private_message`;
+CREATE TABLE `t_private_message` (
+  `id`              BIGINT      NOT NULL AUTO_INCREMENT COMMENT '消息ID',
+  `conversation_id` BIGINT      NOT NULL COMMENT '所属会话ID',
+  `sender_id`       BIGINT      NOT NULL COMMENT '发送者用户ID',
+  `content`         TEXT        NOT NULL COMMENT '消息内容',
+  `type`            VARCHAR(16)      DEFAULT 'text' COMMENT '消息类型: text/image/route/companion',
+  `created_at`      DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_private_msg_conv_time` (`conversation_id`,`created_at`),
+  CONSTRAINT `fk_private_msg_conv` FOREIGN KEY (`conversation_id`) REFERENCES `t_private_conversation` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_private_msg_sender` FOREIGN KEY (`sender_id`) REFERENCES `t_user` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='私信消息表';

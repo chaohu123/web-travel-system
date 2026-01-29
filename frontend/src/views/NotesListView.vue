@@ -1,16 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { api } from '../api'
-
-interface NoteSummary {
-  id: number
-  title: string
-  destination: string
-  coverImage: string | null
-  authorName: string
-  createdAt: string
-}
+import { notesApi, interactionsApi } from '../api'
+import type { NoteSummary } from '../api'
 
 const notes = ref<NoteSummary[]>([])
 const loading = ref(false)
@@ -19,8 +11,7 @@ const router = useRouter()
 const fetchNotes = async () => {
   loading.value = true
   try {
-    const resp = await api.get('/api/notes')
-    notes.value = resp.data.data || []
+    notes.value = await notesApi.list()
   } finally {
     loading.value = false
   }
@@ -30,30 +21,55 @@ const goDetail = (id: number) => {
   router.push(`/notes/${id}`)
 }
 
+// 简单的排序（按点赞数或时间排序）
+const sortedNotes = computed(() => {
+  return [...notes.value].sort((a, b) => {
+    const la = a.likeCount ?? 0
+    const lb = b.likeCount ?? 0
+    if (lb !== la) return lb - la
+    const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0
+    const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0
+    return tb - ta
+  })
+})
+
 onMounted(fetchNotes)
 </script>
 
 <template>
   <div class="page">
     <div class="header">
-      <h2>游记 &amp; 攻略</h2>
+      <div>
+        <h2>游记 &amp; 攻略</h2>
+        <p class="sub">真实旅友分享的线路与故事，可按点赞热度感受大家最爱的玩法。</p>
+      </div>
       <button class="btn primary" @click="$router.push('/notes/create')">写游记</button>
     </div>
 
-    <div v-if="!loading && notes.length === 0" class="empty text-subtle">
+    <div v-if="!loading && sortedNotes.length === 0" class="empty text-subtle">
       还没有游记，做第一个分享旅程的人吧～
     </div>
 
     <div class="list">
-      <article v-for="note in notes" :key="note.id" class="card note-card" @click="goDetail(note.id)">
+      <article
+        v-for="note in sortedNotes"
+        :key="note.id"
+        class="card note-card"
+        @click="goDetail(note.id)"
+      >
         <div class="cover" v-if="note.coverImage">
-          <img :src="note.coverImage" alt="cover" />
+          <img :src="note.coverImage" alt="cover" loading="lazy" />
         </div>
         <div class="content">
           <h3>{{ note.title }}</h3>
           <p class="meta text-subtle">
             <span v-if="note.destination">目的地：{{ note.destination }}</span>
-            <span> · 作者：{{ note.authorName }}</span>
+            <span> · 作者：{{ note.authorName || '旅友' }}</span>
+            <span v-if="note.createdAt"> · {{ note.createdAt }}</span>
+          </p>
+          <p class="stats">
+            <span>♥ {{ note.likeCount ?? 0 }}</span>
+            <span>💬 {{ note.commentCount ?? 0 }}</span>
           </p>
         </div>
       </article>
@@ -70,8 +86,15 @@ onMounted(fetchNotes)
 .header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-end;
   margin-bottom: 16px;
+  gap: 12px;
+}
+
+.sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #64748b;
 }
 
 .list {
@@ -85,6 +108,7 @@ onMounted(fetchNotes)
   gap: 12px;
   padding: 10px 12px;
   cursor: pointer;
+  align-items: stretch;
 }
 
 .note-card:hover {
@@ -92,8 +116,8 @@ onMounted(fetchNotes)
 }
 
 .cover {
-  width: 120px;
-  height: 80px;
+  width: 150px;
+  height: 96px;
   border-radius: 10px;
   overflow: hidden;
   background: #e5e7eb;
@@ -109,6 +133,18 @@ onMounted(fetchNotes)
 .content h3 {
   margin: 2px 0 6px;
   font-size: 16px;
+}
+
+.meta {
+  font-size: 13px;
+}
+
+.stats {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #9ca3af;
+  display: flex;
+  gap: 10px;
 }
 
 .empty {

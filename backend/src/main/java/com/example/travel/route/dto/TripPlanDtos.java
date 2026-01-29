@@ -44,6 +44,10 @@ public class TripPlanDtos {
         private String endTime;
         private String transport;
         private Integer estimatedCost;
+        /** 景点/活动经度 */
+        private Double lng;
+        /** 景点/活动纬度 */
+        private Double lat;
     }
 
     @Data

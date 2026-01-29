@@ -1,17 +1,21 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore, reputationLevelLabel } from '../store'
+import { useMessageStore } from '../store/message'
+import { Bell } from '@element-plus/icons-vue'
 
 const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
+const messageStore = useMessageStore()
 
 const isLoggedIn = computed(() => !!auth.token)
 const displayName = computed(() => auth.nickname || '旅人')
 const initial = computed(() => displayName.value.charAt(0).toUpperCase())
 const creditLevel = computed(() => reputationLevelLabel(auth.reputationLevel))
 const showSearch = computed(() => route.path === '/community')
+const totalUnread = computed(() => messageStore.totalUnread)
 
 const searchInput = ref('')
 watch(
@@ -35,6 +39,22 @@ function logout() {
 function goTo(path: string) {
   router.push(path)
 }
+
+function goMessageCenter() {
+  if (!auth.token) {
+    router.push({ name: 'login', query: { redirect: '/messages' } })
+  } else {
+    router.push('/messages')
+  }
+}
+
+onMounted(() => {
+  if (auth.token) {
+    messageStore.fetchOverview().catch(() => {
+      // 静默失败，不影响主流程
+    })
+  }
+})
 </script>
 
 <template>
@@ -66,6 +86,19 @@ function goTo(path: string) {
       </div>
 
       <div class="nav-right">
+        <el-tooltip content="消息" placement="bottom">
+          <button class="icon-button" type="button" @click="goMessageCenter">
+            <el-badge
+              :value="totalUnread > 99 ? '99+' : totalUnread || 0"
+              :hidden="!isLoggedIn || !totalUnread"
+              class="msg-badge"
+            >
+              <el-icon class="msg-icon">
+                <Bell />
+              </el-icon>
+            </el-badge>
+          </button>
+        </el-tooltip>
         <template v-if="isLoggedIn">
           <el-dropdown trigger="click" placement="bottom-end" @command="(cmd: string) => cmd === 'logout' ? logout() : goTo(cmd)">
             <div class="user-trigger">
@@ -177,6 +210,41 @@ function goTo(path: string) {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.icon-button {
+  border: none;
+  background: transparent;
+  padding: 4px;
+  border-radius: 9999px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+.icon-button:hover {
+  background-color: rgba(15, 23, 42, 0.06);
+}
+
+.icon-button:active {
+  transform: scale(0.95);
+}
+
+.msg-icon {
+  font-size: 20px;
+  color: #64748b;
+}
+
+.icon-button:hover .msg-icon {
+  color: #0d9488;
+}
+
+.msg-badge :deep(.el-badge__content) {
+  background-color: #ef4444;
+  box-shadow: 0 0 0 1px #fff;
+  transition: all 0.2s ease;
 }
 
 .user-trigger {

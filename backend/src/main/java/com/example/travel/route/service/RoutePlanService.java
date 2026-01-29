@@ -3,10 +3,14 @@ package com.example.travel.route.service;
 import com.example.travel.common.exception.BusinessException;
 import com.example.travel.route.dto.TripPlanDtos;
 import com.example.travel.route.entity.TripPlan;
+import com.example.travel.route.repository.TripActivityRepository;
+import com.example.travel.route.repository.TripDayRepository;
 import com.example.travel.route.repository.TripPlanRepository;
 import com.example.travel.user.entity.User;
 import com.example.travel.user.repository.UserRepository;
 import jakarta.transaction.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -20,12 +24,20 @@ import java.util.stream.Collectors;
 @Service
 public class RoutePlanService {
 
+    private static final Logger log = LoggerFactory.getLogger(RoutePlanService.class);
+
     private final TripPlanRepository tripPlanRepository;
+    private final TripDayRepository tripDayRepository;
+    private final TripActivityRepository tripActivityRepository;
     private final UserRepository userRepository;
 
     public RoutePlanService(TripPlanRepository tripPlanRepository,
+                            TripDayRepository tripDayRepository,
+                            TripActivityRepository tripActivityRepository,
                             UserRepository userRepository) {
         this.tripPlanRepository = tripPlanRepository;
+        this.tripDayRepository = tripDayRepository;
+        this.tripActivityRepository = tripActivityRepository;
         this.userRepository = userRepository;
     }
 
@@ -70,7 +82,15 @@ public class RoutePlanService {
         TripPlan plan = tripPlanRepository.findById(id)
                 .orElseThrow(() -> BusinessException.badRequest("行程不存在"));
 
-        return toResponseWithSimpleActivities(plan);
+        TripPlanDtos.PlanResponse resp = toResponseWithDbActivities(plan);
+        if (log.isDebugEnabled()) {
+            int dayCount = resp.getDays() != null ? resp.getDays().size() : 0;
+            int actCount = resp.getDays() == null ? 0 : resp.getDays().stream()
+                    .mapToInt(d -> d.getActivities() == null ? 0 : d.getActivities().size())
+                    .sum();
+            log.debug("[RoutePlan] Loaded plan {} with {} days, {} activities", id, dayCount, actCount);
+        }
+        return resp;
     }
 
     private TripPlanDtos.PlanResponse toResponseWithoutActivities(TripPlan plan) {
@@ -88,33 +108,41 @@ public class RoutePlanService {
     }
 
     /**
-     * 简化版：按照日期区间自动生成每天 3 个占位活动，后续可换为 AI/规则引擎。
+     * 使用数据库中实际的 TripDay / TripActivity 构建返回结果。
+     * 若某些活动尚未配置经纬度，lng/lat 为 null，由前端自行地理编码兜底。
      */
-    private TripPlanDtos.PlanResponse toResponseWithSimpleActivities(TripPlan plan) {
+    private TripPlanDtos.PlanResponse toResponseWithDbActivities(TripPlan plan) {
         TripPlanDtos.PlanResponse resp = toResponseWithoutActivities(plan);
         List<TripPlanDtos.Day> days = new ArrayList<>();
-        long daysCount = ChronoUnit.DAYS.between(plan.getStartDate(), plan.getEndDate()) + 1;
-        for (int i = 0; i < daysCount; i++) {
-            LocalDate date = plan.getStartDate().plusDays(i);
-            TripPlanDtos.Day day = new TripPlanDtos.Day();
-            day.setDayIndex(i + 1);
-            day.setDate(date);
 
-            List<TripPlanDtos.Activity> activities = new ArrayList<>();
-            for (int j = 0; j < 3; j++) {
-                TripPlanDtos.Activity a = new TripPlanDtos.Activity();
-                a.setType("sight");
-                a.setName("待定景点 " + (j + 1));
-                a.setLocation(plan.getDestination());
-                a.setStartTime((9 + j * 3) + ":00");
-                a.setEndTime((11 + j * 3) + ":00");
-                a.setTransport("待定");
-                a.setEstimatedCost(0);
-                activities.add(a);
-            }
+        // 读取该行程下所有天
+        var tripDays = tripDayRepository.findByPlanOrderByDayIndexAsc(plan);
+        for (var tripDay : tripDays) {
+            TripPlanDtos.Day day = new TripPlanDtos.Day();
+            day.setDayIndex(tripDay.getDayIndex());
+            day.setDate(tripDay.getDate());
+
+            // 读取当天的所有活动
+            var activities = new ArrayList<TripPlanDtos.Activity>();
+            tripActivityRepository.findByTripDayOrderByStartTimeAscIdAsc(tripDay)
+                    .forEach(act -> {
+                        TripPlanDtos.Activity a = new TripPlanDtos.Activity();
+                        a.setType(act.getType());
+                        a.setName(act.getName());
+                        a.setLocation(act.getLocation());
+                        a.setStartTime(act.getStartTime());
+                        a.setEndTime(act.getEndTime());
+                        a.setTransport(act.getTransport());
+                        a.setEstimatedCost(act.getEstimatedCost());
+                        a.setLng(act.getLng());
+                        a.setLat(act.getLat());
+                        activities.add(a);
+                    });
+
             day.setActivities(activities);
             days.add(day);
         }
+
         resp.setDays(days);
         return resp;
     }

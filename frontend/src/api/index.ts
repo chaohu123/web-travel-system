@@ -15,6 +15,12 @@ import type {
   NoteSummary,
   FeedItem,
   CommentItem,
+  UserPublicProfile,
+  PageResult,
+  InteractionSummary,
+  InteractionMessageDTO,
+  ConversationSummaryDTO,
+  MessageOverview,
 } from './types'
 
 export const api: AxiosInstance = axios.create({
@@ -61,6 +67,38 @@ export const authApi = {
   },
 }
 
+/** 消息中心（对齐后端接口风格） */
+export const messageApi = {
+  /** 顶部概览（未读数）- GET /api/messages/overview */
+  overview() {
+    return api.get<ApiResponse<MessageOverview>>('/messages/overview').then(unwrap)
+  },
+  /** 互动消息列表 - GET /api/messages/interactions?page=1&pageSize=10&category=all */
+  interactionList(params: { page: number; pageSize: number; category?: 'all' | 'like' | 'comment' }) {
+    return api
+      .get<ApiResponse<PageResult<InteractionMessageDTO>>>('/messages/interactions', { params })
+      .then(unwrap)
+  },
+  /** 私信会话列表 - GET /api/messages/conversations?page=1&pageSize=10 */
+  conversationList(params: { page: number; pageSize: number }) {
+    return api
+      .get<ApiResponse<PageResult<ConversationSummaryDTO>>>('/messages/conversations', { params })
+      .then(unwrap)
+  },
+  /** 标记单条互动消息已读 - POST /api/messages/interactions/{id}/read */
+  markInteractionRead(id: number) {
+    return api.post<ApiResponse<void>>(`/messages/interactions/${id}/read`, {}).then(unwrap)
+  },
+  /** 全部互动消息标记已读 - POST /api/messages/interactions/read-all */
+  markAllInteractionRead() {
+    return api.post<ApiResponse<void>>('/messages/interactions/read-all', {}).then(unwrap)
+  },
+  /** 清空某个会话未读数（进入聊天页）- POST /api/messages/conversations/{id}/clear-unread */
+  clearConversationUnread(conversationId: number) {
+    return api.post<ApiResponse<void>>(`/messages/conversations/${conversationId}/clear-unread`, {}).then(unwrap)
+  },
+}
+
 /** 用户 */
 export const userApi = {
   meDetail() {
@@ -68,6 +106,38 @@ export const userApi = {
   },
   updateProfile(body: UpdateProfileRequest) {
     return api.put<ApiResponse<MeDetail>>('/users/me/profile', body).then(unwrap)
+  },
+  /** 对外展示的个人主页信息 */
+  getPublicProfile(userId: number) {
+    return api.get<ApiResponse<UserPublicProfile>>(`/users/${userId}/homepage`).then(unwrap)
+  },
+  /** 关注某个用户 */
+  follow(userId: number) {
+    return api.post<ApiResponse<void>>(`/users/${userId}/follow`, {}).then(unwrap)
+  },
+  /** 取消关注某个用户 */
+  unfollow(userId: number) {
+    return api.post<ApiResponse<void>>(`/users/${userId}/unfollow`, {}).then(unwrap)
+  },
+  /** 该用户发布的游记列表 */
+  userNotes(userId: number) {
+    return api.get<ApiResponse<NoteSummary[]>>(`/users/${userId}/notes`).then(unwrap)
+  },
+  /** 该用户创建的路线列表 */
+  userRoutes(userId: number) {
+    return api.get<ApiResponse<PlanResponse[]>>(`/users/${userId}/routes`).then(unwrap)
+  },
+  /** 该用户发布的结伴活动 */
+  userCompanions(userId: number) {
+    return api.get<ApiResponse<CompanionPostSummary[]>>(`/users/${userId}/companion`).then(unwrap)
+  },
+  /** 其他人对该用户的评价（分页） */
+  userReviews(userId: number, page: number, pageSize: number) {
+    return api
+      .get<ApiResponse<PageResult<CommentItem>>>(`/users/${userId}/reviews`, {
+        params: { page, pageSize },
+      })
+      .then(unwrap)
   },
 }
 
@@ -95,6 +165,10 @@ export const companionApi = {
   getPost(id: number) {
     return api.get<ApiResponse<CompanionPostDetail>>(`/companion/posts/${id}`).then(unwrap)
   },
+  /** 智能推荐结伴活动（根据登录用户标签或热度） */
+  recommend(limit: number = 3) {
+    return api.get<ApiResponse<CompanionPostSummary[]>>('/companion/posts/recommend', { params: { limit } }).then(unwrap)
+  },
 }
 
 /** 游记 */
@@ -103,7 +177,20 @@ export const notesApi = {
     return api.get<ApiResponse<NoteSummary[]>>('/notes').then(unwrap)
   },
   getOne(id: number) {
-    return api.get<ApiResponse<{ id: number; title: string; content: string; coverImage?: string; authorName?: string; createdAt?: string }>>(`/notes/${id}`).then(unwrap)
+    return api.get<ApiResponse<{
+      id: number
+      title: string
+      content: string
+      coverImage?: string
+      relatedPlanId?: number
+      destination?: string
+      authorId?: number
+      authorName?: string
+      createdAt?: string
+    }>>(`/notes/${id}`).then(unwrap)
+  },
+  update(id: number, body: { title: string; content: string; coverImage?: string; relatedPlanId?: number; destination?: string }) {
+    return api.put<ApiResponse<void>>(`/notes/${id}`, body).then(unwrap)
   },
 }
 
@@ -124,6 +211,29 @@ export const commentsApi = {
   },
   create(body: { targetType: string; targetId: number; content: string; score?: number }) {
     return api.post<ApiResponse<void>>('/comments', body).then(unwrap)
+  },
+}
+
+/** 点赞 & 收藏 */
+export const interactionsApi = {
+  like(targetType: string, targetId: number) {
+    return api.post<ApiResponse<void>>('/interactions/likes', { targetType, targetId }).then(unwrap)
+  },
+  unlike(targetType: string, targetId: number) {
+    return api.delete<ApiResponse<void>>('/interactions/likes', { params: { targetType, targetId } }).then(unwrap)
+  },
+  favorite(targetType: string, targetId: number) {
+    return api.post<ApiResponse<void>>('/interactions/favorites', { targetType, targetId }).then(unwrap)
+  },
+  unfavorite(targetType: string, targetId: number) {
+    return api
+      .delete<ApiResponse<void>>('/interactions/favorites', { params: { targetType, targetId } })
+      .then(unwrap)
+  },
+  summary(targetType: string, targetId: number) {
+    return api
+      .get<ApiResponse<InteractionSummary>>('/interactions/summary', { params: { targetType, targetId } })
+      .then(unwrap)
   },
 }
 

@@ -35,10 +35,24 @@ const usernameComputed = () => (tab.value === 'phone' ? phone.value : email.valu
 /** 友好错误文案 */
 function friendlyMessage(raw: string, isLogin: boolean): string {
   const s = (raw || '').toLowerCase()
-  if (s.includes('密码') || s.includes('password') || s.includes('错误') || s.includes('invalid')) return '密码好像不对，再试试吧~'
-  if (s.includes('用户') || s.includes('账号') || s.includes('not found')) return '账号不存在，检查一下手机号/邮箱哦'
-  if (s.includes('验证') || s.includes('格式')) return raw || '请检查输入格式'
-  return isLogin ? '登录失败了，请稍后重试' : '注册失败了，请检查信息后重试'
+  // 优先使用后端返回的友好提示（如果已经包含"请检查后重试"等友好词汇）
+  if (s.includes('请检查后重试') || s.includes('请检查') || s.includes('重试')) {
+    return raw
+  }
+  // 密码相关错误
+  if (s.includes('密码') || s.includes('password') || s.includes('错误') || s.includes('invalid') || s.includes('badcredentials')) {
+    return isLogin ? '账号或密码错误，请检查后重试' : '密码格式不正确，请检查后重试'
+  }
+  // 账号不存在
+  if (s.includes('用户') || s.includes('账号') || s.includes('not found') || s.includes('不存在')) {
+    return '账号不存在，检查一下手机号/邮箱哦'
+  }
+  // 格式验证错误
+  if (s.includes('验证') || s.includes('格式') || s.includes('格式不正确')) {
+    return raw || '请检查输入格式'
+  }
+  // 默认提示
+  return isLogin ? '登录失败，请稍后重试' : '注册失败，请检查信息后重试'
 }
 
 /** 失焦校验 */
@@ -101,8 +115,13 @@ const handleSubmit = async () => {
       } catch {
         /* ignore */
       }
-      const redirect = (router.currentRoute.value.query.redirect as string) || '/'
-      router.push(redirect)
+      // 登录成功后跳转：如果有 redirect 参数且是有效路径，则跳转；否则跳转到首页
+      const redirect = router.currentRoute.value.query.redirect as string | undefined
+      if (redirect && redirect.startsWith('/') && !redirect.startsWith('//')) {
+        router.push(redirect)
+      } else {
+        router.push('/')
+      }
     } else {
       await authApi.register({
         email: tab.value === 'email' ? email.value : undefined,

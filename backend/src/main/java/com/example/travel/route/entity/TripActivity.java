@@ -30,5 +30,9 @@ public class TripActivity {
 
     private String transport; // 步行 / 地铁 / 出租车 等
     private Integer estimatedCost;
+
+    // 新增：经纬度，用于前端地图折线展示真实位置（可为空）
+    private Double lng; // 经度
+    private Double lat; // 纬度
 }
 

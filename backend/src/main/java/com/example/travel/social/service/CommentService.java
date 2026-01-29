@@ -10,7 +10,9 @@ import com.example.travel.companion.entity.TeamMember;
 import com.example.travel.companion.repository.CompanionTeamRepository;
 import com.example.travel.companion.repository.TeamMemberRepository;
 import com.example.travel.user.entity.User;
+import com.example.travel.user.entity.UserProfile;
 import com.example.travel.user.entity.UserReputation;
+import com.example.travel.user.repository.UserProfileRepository;
 import com.example.travel.user.repository.UserReputationRepository;
 import com.example.travel.user.repository.UserRepository;
 import jakarta.transaction.Transactional;
@@ -28,6 +30,7 @@ public class CommentService {
     private final CommentRepository commentRepository;
     private final TravelNoteRepository travelNoteRepository;
     private final UserRepository userRepository;
+    private final UserProfileRepository userProfileRepository;
     private final UserReputationRepository userReputationRepository;
     private final CompanionTeamRepository companionTeamRepository;
     private final TeamMemberRepository teamMemberRepository;
@@ -35,12 +38,14 @@ public class CommentService {
     public CommentService(CommentRepository commentRepository,
                           TravelNoteRepository travelNoteRepository,
                           UserRepository userRepository,
+                          UserProfileRepository userProfileRepository,
                           UserReputationRepository userReputationRepository,
                           CompanionTeamRepository companionTeamRepository,
                           TeamMemberRepository teamMemberRepository) {
         this.commentRepository = commentRepository;
         this.travelNoteRepository = travelNoteRepository;
         this.userRepository = userRepository;
+        this.userProfileRepository = userProfileRepository;
         this.userReputationRepository = userReputationRepository;
         this.companionTeamRepository = companionTeamRepository;
         this.teamMemberRepository = teamMemberRepository;
@@ -72,6 +77,10 @@ public class CommentService {
         comment.setTargetId(req.getTargetId());
         comment.setContent(req.getContent());
         comment.setScore(req.getScore());
+        if (req.getTags() != null && !req.getTags().isEmpty()) {
+            String tagsJoined = String.join(",", req.getTags());
+            comment.setTags(tagsJoined);
+        }
         commentRepository.save(comment);
 
         // 如果是针对小队的评分，则给队长增加信誉积分
@@ -98,10 +107,29 @@ public class CommentService {
     private CommentDtos.CommentItem toItem(Comment comment) {
         CommentDtos.CommentItem item = new CommentDtos.CommentItem();
         item.setId(comment.getId());
-        item.setUserName(comment.getUser() != null ? comment.getUser().getEmail() : "");
+        if (comment.getUser() != null) {
+            item.setUserId(comment.getUser().getId());
+            // 获取用户昵称，如果没有则使用邮箱或手机号
+            UserProfile profile = userProfileRepository.findById(comment.getUser().getId()).orElse(null);
+            if (profile != null && profile.getNickname() != null && !profile.getNickname().isBlank()) {
+                item.setUserName(profile.getNickname());
+            } else {
+                String name = comment.getUser().getEmail() != null
+                        ? comment.getUser().getEmail()
+                        : (comment.getUser().getPhone() != null ? comment.getUser().getPhone() : "旅友");
+                item.setUserName(name);
+            }
+        } else {
+            item.setUserId(null);
+            item.setUserName("旅友");
+        }
         item.setContent(comment.getContent());
         item.setScore(comment.getScore());
         item.setCreatedAt(comment.getCreatedAt());
+        if (comment.getTags() != null && !comment.getTags().isEmpty()) {
+            String[] arr = comment.getTags().split(",");
+            item.setTags(java.util.Arrays.asList(arr));
+        }
         return item;
     }
 

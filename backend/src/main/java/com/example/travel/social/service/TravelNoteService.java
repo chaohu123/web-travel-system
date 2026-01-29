@@ -60,13 +60,32 @@ public class TravelNoteService {
         return toDetail(note);
     }
 
+    @Transactional
+    public void update(Long id, TravelNoteDtos.UpdateRequest req) {
+        User current = getCurrentUser();
+        TravelNote note = travelNoteRepository.findById(id)
+                .orElseThrow(() -> BusinessException.badRequest("游记不存在"));
+        if (note.getAuthor() == null || !note.getAuthor().getId().equals(current.getId())) {
+            throw BusinessException.forbidden("只能编辑自己的游记");
+        }
+        note.setTitle(req.getTitle());
+        note.setContent(req.getContent());
+        note.setCoverImage(req.getCoverImage());
+        note.setRelatedPlanId(req.getRelatedPlanId());
+        note.setDestination(req.getDestination());
+        travelNoteRepository.save(note);
+    }
+
     private TravelNoteDtos.Summary toSummary(TravelNote note) {
         TravelNoteDtos.Summary dto = new TravelNoteDtos.Summary();
         dto.setId(note.getId());
         dto.setTitle(note.getTitle());
         dto.setDestination(note.getDestination());
         dto.setCoverImage(note.getCoverImage());
-        dto.setAuthorName(note.getAuthor() != null ? note.getAuthor().getEmail() : "");
+        if (note.getAuthor() != null) {
+            dto.setAuthorId(note.getAuthor().getId());
+            dto.setAuthorName(note.getAuthor().getEmail());
+        }
         dto.setCreatedAt(note.getCreatedAt());
         return dto;
     }
@@ -79,7 +98,10 @@ public class TravelNoteService {
         dto.setCoverImage(note.getCoverImage());
         dto.setRelatedPlanId(note.getRelatedPlanId());
         dto.setDestination(note.getDestination());
-        dto.setAuthorName(note.getAuthor() != null ? note.getAuthor().getEmail() : "");
+        if (note.getAuthor() != null) {
+            dto.setAuthorId(note.getAuthor().getId());
+            dto.setAuthorName(note.getAuthor().getEmail());
+        }
         dto.setCreatedAt(note.getCreatedAt());
         return dto;
     }

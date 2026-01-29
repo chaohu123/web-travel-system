@@ -9,5 +9,7 @@ import java.util.List;
 public interface TripPlanRepository extends JpaRepository<TripPlan, Long> {
 
     List<TripPlan> findByOwnerOrderByCreatedAtDesc(User owner);
+
+    long countByOwner(User owner);
 }
 

@@ -9,10 +9,24 @@ const props = withDefaults(
     authorName: string
     likes: number
     comments: number
-    /** 游记 ID，有则整卡点击跳转到游记详情 */
+    /**
+     * 内容类型：游记 / 路线 / 结伴 / 动态
+     * 默认游记，便于 SEO 与详情页承接
+     */
+    type?: 'note' | 'route' | 'companion' | 'feed'
+    /** 对应内容的主键 ID */
+    targetId?: number
+    /**
+     * 兼容旧用法：游记 ID，有则整卡点击跳转到游记详情
+     * 建议使用 type + targetId
+     */
     noteId?: number
   }>(),
-  { noteId: undefined }
+  {
+    type: 'note',
+    targetId: undefined,
+    noteId: undefined,
+  },
 )
 
 const emit = defineEmits<{ click: [payload: { title: string; likes: number; comments: number }] }>()
@@ -20,8 +34,34 @@ const router = useRouter()
 
 function handleClick() {
   emit('click', { title: props.title, likes: props.likes, comments: props.comments })
-  if (props.noteId != null) {
-    router.push(`/notes/${props.noteId}`)
+
+  // 统一根据内容类型跳转到对应详情页
+  let finalType = props.type
+  let finalId = props.targetId
+
+  // 兼容历史字段：如果没传 targetId，但传了 noteId，则按游记处理
+  if (finalId == null && props.noteId != null) {
+    finalType = 'note'
+    finalId = props.noteId
+  }
+
+  if (finalId == null) return
+
+  switch (finalType) {
+    case 'route':
+      router.push({ name: 'route-detail', params: { id: finalId } })
+      break
+    case 'companion':
+      router.push({ name: 'companion-detail', params: { id: finalId } })
+      break
+    case 'feed':
+      // 目前动态是列表页，没有单独详情，这里统一落到社区/动态页
+      router.push({ name: 'feed' })
+      break
+    case 'note':
+    default:
+      router.push({ name: 'note-detail', params: { id: finalId } })
+      break
   }
 }
 </script>

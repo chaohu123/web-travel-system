@@ -4,8 +4,8 @@ import { useRouter } from 'vue-router'
 import RouteCard from '../components/RouteCard.vue'
 import BuddyCard from '../components/BuddyCard.vue'
 import CommunityCard from '../components/CommunityCard.vue'
-import { useAuthStore } from '../store'
-import { userApi, routesApi, companionApi, notesApi } from '../api'
+import { useAuthStore, reputationLevelLabel } from '../store'
+import { userApi, routesApi, companionApi, notesApi, feedsApi, interactionsApi } from '../api'
 import type { PlanResponse, CompanionPostSummary, NoteSummary } from '../api'
 
 const router = useRouter()
@@ -24,7 +24,8 @@ const routeList = ref<Array<{
   budgetMax: number
 }>>([])
 const buddyList = ref<Array<{
-  id: number
+  postId: number
+  userId?: number
   avatar: string
   nickname: string
   creditLevel: string
@@ -32,15 +33,21 @@ const buddyList = ref<Array<{
   time: string
   styles: string[]
 }>>([])
-const communityList = ref<Array<{
-  id: number
-  cover: string
-  title: string
-  authorAvatar: string
-  authorName: string
-  likes: number
-  comments: number
-}>>([])
+const communityList = ref<
+  Array<{
+    id: number
+    cover: string
+    title: string
+    authorAvatar: string
+    authorName: string
+    likes: number
+    comments: number
+    /** 内容类型：游记 / 路线 / 结伴 / 动态 */
+    type: 'note' | 'route' | 'companion' | 'feed'
+    /** 对应内容 ID，用于跳转 */
+    targetId: number
+  }>
+>([])
 
 const bannerList = ref<
   Array<{
@@ -100,14 +107,55 @@ const MOCK_ROUTES = [
   { id: 3, cover: 'https://picsum.photos/seed/route3/400/250', title: '厦门鼓浪屿美食 3 日', tags: ['美食', '海岛'], days: 3, budgetMin: 2000, budgetMax: 4000 },
 ]
 const MOCK_BUDDIES = [
-  { id: 1, avatar: '', nickname: '小鹿', creditLevel: '金牌', destination: '北海道', time: '2 月初 · 约 7 天', styles: ['摄影', '美食'] },
-  { id: 2, avatar: '', nickname: '行者老张', creditLevel: '钻石', destination: '新疆', time: '7 月 · 约 10 天', styles: ['自驾', '风光'] },
-  { id: 3, avatar: '', nickname: '桃桃', creditLevel: '银牌', destination: '泰国清迈', time: '3 月 · 约 5 天', styles: ['休闲', '夜市'] },
+  // mock 数据不保证与数据库用户ID一致，因此不提供 userId，避免跳转到错误个人主页
+  { postId: 1, userId: undefined, avatar: '', nickname: '小鹿', creditLevel: '金牌', destination: '北海道', time: '2 月初 · 约 7 天', styles: ['摄影', '美食'] },
+  { postId: 2, userId: undefined, avatar: '', nickname: '行者老张', creditLevel: '钻石', destination: '新疆', time: '7 月 · 约 10 天', styles: ['自驾', '风光'] },
+  { postId: 3, userId: undefined, avatar: '', nickname: '桃桃', creditLevel: '银牌', destination: '泰国清迈', time: '3 月 ·约 5 天', styles: ['休闲', '夜市'] },
 ]
-const MOCK_COMMUNITY = [
-  { id: 1, cover: 'https://picsum.photos/seed/comm1/400/250', title: '一个人去冰岛：环岛自驾与极光攻略', authorAvatar: '', authorName: '北极星', likes: 1203, comments: 89 },
-  { id: 2, cover: 'https://picsum.photos/seed/comm2/400/250', title: '东京 5 日暴走打卡清单（含机酒预算）', authorAvatar: '', authorName: '关东煮', likes: 856, comments: 42 },
-  { id: 3, cover: 'https://picsum.photos/seed/comm3/400/250', title: '大理洱海边的慢生活：住宿与拍照机位', authorAvatar: '', authorName: '苍山雪', likes: 634, comments: 31 },
+const MOCK_COMMUNITY: Array<{
+  id: number
+  cover: string
+  title: string
+  authorAvatar: string
+  authorName: string
+  likes: number
+  comments: number
+  type: 'note' | 'route' | 'companion' | 'feed'
+  targetId: number
+}> = [
+  {
+    id: 1,
+    cover: 'https://picsum.photos/seed/comm1/400/250',
+    title: '一个人去冰岛：环岛自驾与极光攻略',
+    authorAvatar: '',
+    authorName: '北极星',
+    likes: 1203,
+    comments: 89,
+    type: 'note',
+    targetId: 1,
+  },
+  {
+    id: 2,
+    cover: 'https://picsum.photos/seed/comm2/400/250',
+    title: '东京 5 日暴走打卡清单（含机酒预算）',
+    authorAvatar: '',
+    authorName: '关东煮',
+    likes: 856,
+    comments: 42,
+    type: 'route',
+    targetId: 2,
+  },
+  {
+    id: 3,
+    cover: 'https://picsum.photos/seed/comm3/400/250',
+    title: '大理洱海边的慢生活：住宿与拍照机位',
+    authorAvatar: '',
+    authorName: '苍山雪',
+    likes: 634,
+    comments: 31,
+    type: 'companion',
+    targetId: 3,
+  },
 ]
 
 function daysBetween(start: string, end: string): number {
@@ -135,14 +183,27 @@ function mapPostToBuddy(p: CompanionPostSummary) {
   const start = p.startDate ? new Date(p.startDate).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : ''
   const end = p.endDate ? new Date(p.endDate).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : ''
   const time = start && end ? `${start} - ${end}` : '待定'
+  
+  // 解析创建者标签
+  const styles: string[] = []
+  if (p.creatorTags) {
+    const tags = p.creatorTags.split(',').map(t => t.trim()).filter(Boolean)
+    styles.push(...tags)
+  }
+  // 如果没有标签，至少显示目的地
+  if (styles.length === 0 && p.destination) {
+    styles.push(p.destination)
+  }
+  
   return {
-    id: p.id,
-    avatar: '',
+    postId: p.id,
+    userId: p.creatorId, // 创建者ID，用于跳转个人主页和私信
+    avatar: p.creatorAvatar || '',
     nickname: p.creatorNickname || '旅友',
-    creditLevel: '铜牌',
+    creditLevel: reputationLevelLabel(p.creatorReputationLevel ?? null),
     destination: p.destination,
     time,
-    styles: [p.destination].filter(Boolean),
+    styles,
   }
 }
 
@@ -153,8 +214,10 @@ function mapNoteToCommunity(n: NoteSummary) {
     title: n.title,
     authorAvatar: '',
     authorName: n.authorName || '用户',
-    likes: 0,
-    comments: 0,
+    likes: n.likeCount ?? 0,
+    comments: n.commentCount ?? 0,
+    type: 'note' as const,
+    targetId: n.id,
   }
 }
 
@@ -169,51 +232,116 @@ async function loadUserDetail() {
 }
 
 async function loadRoutes() {
+  // 路线推荐需要登录，未登录时不显示
   if (!auth.token) {
-    routeList.value = MOCK_ROUTES
+    routeList.value = []
     return
   }
   routesLoading.value = true
   try {
     const list = await routesApi.myPlans()
     routeList.value = list.map(mapPlanToCard)
-    if (routeList.value.length === 0) routeList.value = MOCK_ROUTES
   } catch {
-    routeList.value = MOCK_ROUTES
+    routeList.value = []
   } finally {
     routesLoading.value = false
   }
 }
 
 async function loadBuddies() {
-  if (!auth.token) {
-    buddyList.value = MOCK_BUDDIES
-    return
-  }
   buddyLoading.value = true
   try {
-    const list = await companionApi.listPosts()
+    // 优先使用智能推荐接口；失败或返回空时回退为公开列表前 3 条
+    let list: CompanionPostSummary[] = []
+    try {
+      const raw = await companionApi.recommend(3)
+      list = Array.isArray(raw) ? raw : []
+    } catch {
+      // recommend 失败（如未登录被拒、网络错误）时回退为公开结伴列表
+      try {
+        const raw = await companionApi.listPosts({})
+        list = Array.isArray(raw) ? raw.slice(0, 3) : []
+      } catch {
+        list = []
+      }
+    }
     buddyList.value = list.map(mapPostToBuddy)
-    if (buddyList.value.length === 0) buddyList.value = MOCK_BUDDIES
   } catch {
-    buddyList.value = MOCK_BUDDIES
+    buddyList.value = []
   } finally {
     buddyLoading.value = false
   }
 }
 
 async function loadCommunity() {
-  if (!auth.token) {
-    communityList.value = MOCK_COMMUNITY
-    return
-  }
   communityLoading.value = true
   try {
-    const list = await notesApi.list()
-    communityList.value = list.map(mapNoteToCommunity)
-    if (communityList.value.length === 0) communityList.value = MOCK_COMMUNITY
+    // 同时加载游记和动态（都支持未登录访问）
+    const [notes, feeds] = await Promise.all([
+      notesApi.list().catch(() => []),
+      feedsApi.list().catch(() => []),
+    ])
+    
+    // 处理游记：获取点赞数和评论数
+    const enrichedNotes = await Promise.all(
+      notes.map(async (n) => {
+        try {
+          const summary = await interactionsApi.summary('note', n.id)
+          return { ...n, likeCount: summary.likeCount, commentCount: n.commentCount ?? 0 }
+        } catch {
+          return { ...n, likeCount: n.likeCount ?? 0, commentCount: n.commentCount ?? 0 }
+        }
+      }),
+    )
+    
+    // 处理动态：获取点赞数和评论数
+    const enrichedFeeds = await Promise.all(
+      feeds.map(async (f) => {
+        try {
+          const summary = await interactionsApi.summary('feed', f.id)
+          return {
+            id: f.id,
+            cover: f.imageUrlsJson ? JSON.parse(f.imageUrlsJson)[0] : undefined,
+            title: f.content.length > 50 ? f.content.substring(0, 50) + '...' : f.content,
+            authorAvatar: '',
+            authorName: f.authorName || '用户',
+            likes: summary.likeCount,
+            comments: 0, // 动态暂时没有评论数
+            type: 'feed' as const,
+            targetId: f.id,
+          }
+        } catch {
+          return {
+            id: f.id,
+            cover: f.imageUrlsJson ? JSON.parse(f.imageUrlsJson)[0] : undefined,
+            title: f.content.length > 50 ? f.content.substring(0, 50) + '...' : f.content,
+            authorAvatar: '',
+            authorName: f.authorName || '用户',
+            likes: 0,
+            comments: 0,
+            type: 'feed' as const,
+            targetId: f.id,
+          }
+        }
+      }),
+    )
+    
+    // 合并游记和动态，按时间排序（最新的在前）
+    const allItems = [
+      ...enrichedNotes.map(mapNoteToCommunity),
+      ...enrichedFeeds,
+    ].sort((a, b) => {
+      // 简单排序：游记优先，然后按ID倒序（假设ID越大越新）
+      if (a.type !== b.type) {
+        return a.type === 'note' ? -1 : 1
+      }
+      return b.id - a.id
+    })
+    
+    // 取前6条作为首页展示
+    communityList.value = allItems.slice(0, 6)
   } catch {
-    communityList.value = MOCK_COMMUNITY
+    communityList.value = []
   } finally {
     communityLoading.value = false
   }
@@ -252,8 +380,8 @@ async function onSearchSubmit(payload: { destination: string; startDate: string;
   }
 }
 
-function onCommunityClick(payload: { title: string; likes: number; comments: number }) {
-  console.log('Community 点击:', payload)
+function onCommunityClick(_payload: { title: string; likes: number; comments: number }) {
+  // 具体跳转逻辑已经在 CommunityCard 内部根据 type + targetId 统一处理
 }
 
 onMounted(() => {
@@ -306,24 +434,27 @@ onMounted(() => {
       </section>
 
       <!-- 为你推荐：路线 / 游记 -->
-      <section class="py-14 max-w-6xl mx-auto px-4 sm:px-6">
+      <section v-if="auth.token" class="py-14 max-w-6xl mx-auto px-4 sm:px-6">
         <h2 class="home-section-title">为你推荐</h2>
         <p class="home-section-subtitle">根据你的偏好，推荐适合的路线与游记</p>
-      <div v-if="routesLoading" class="text-slate-500 py-8">加载中...</div>
-      <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <RouteCard
-          v-for="r in routeList"
-          :key="r.id"
-          :cover="r.cover"
-          :title="r.title"
-          :tags="r.tags"
-          :days="r.days"
-          :budget-min="r.budgetMin"
-          :budget-max="r.budgetMax"
-          :route-id="r.id"
-        />
-      </div>
-    </section>
+        <div v-if="routesLoading" class="text-slate-500 py-8">加载中...</div>
+        <div v-else-if="routeList.length === 0" class="text-slate-500 py-8 text-center">
+          <p>还没有创建过路线，<router-link to="/routes/create" class="text-indigo-600 hover:underline">立即规划你的第一条路线</router-link></p>
+        </div>
+        <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <RouteCard
+            v-for="r in routeList"
+            :key="r.id"
+            :cover="r.cover"
+            :title="r.title"
+            :tags="r.tags"
+            :days="r.days"
+            :budget-min="r.budgetMin"
+            :budget-max="r.budgetMax"
+            :route-id="r.id"
+          />
+        </div>
+      </section>
 
       <!-- 热门景点与目的地 -->
       <section class="py-14 bg-white border-y border-slate-100">
@@ -336,7 +467,13 @@ onMounted(() => {
               :key="s.id"
               shadow="hover"
               class="hotspot-card"
-              @click="$router.push('/routes')"
+              @click="
+                $router.push({
+                  name: 'spot-detail',
+                  params: { id: s.id },
+                  query: { name: s.name, city: s.city },
+                })
+              "
             >
               <div class="hotspot-cover">
                 <img :src="s.image" :alt="s.name" loading="lazy" />
@@ -346,7 +483,7 @@ onMounted(() => {
                 <p class="text-xs text-slate-500 mt-0.5">{{ s.city }}</p>
                 <div class="flex items-center justify-between mt-2">
                   <el-tag size="small" type="warning" effect="plain">热度 {{ s.score.toFixed(1) }}</el-tag>
-                  <el-button text size="small" type="primary">查看路线</el-button>
+                  <el-button text size="small" type="primary">查看景点</el-button>
                 </div>
               </div>
             </el-card>
@@ -360,16 +497,21 @@ onMounted(() => {
         <h2 class="home-section-title">结伴活动推荐</h2>
         <p class="home-section-subtitle">找到和你同路的旅友，一起出发</p>
         <div v-if="buddyLoading" class="text-slate-500 py-8">加载中...</div>
+        <div v-else-if="buddyList.length === 0" class="text-slate-500 py-8 text-center">
+          <p>暂无推荐的结伴活动</p>
+        </div>
         <div v-else class="grid grid-cols-1 md:grid-cols-3 gap-6">
           <BuddyCard
             v-for="b in buddyList"
-            :key="b.id"
+            :key="b.postId"
             :avatar="b.avatar"
             :nickname="b.nickname"
             :credit-level="b.creditLevel"
             :destination="b.destination"
             :time="b.time"
             :styles="b.styles"
+            :user-id="b.userId"
+            :post-id="b.postId"
           />
         </div>
       </div>
@@ -380,6 +522,9 @@ onMounted(() => {
         <h2 class="home-section-title">社区动态</h2>
         <p class="home-section-subtitle">看看旅友们最近在分享什么</p>
         <div v-if="communityLoading" class="text-slate-500 py-8">加载中...</div>
+        <div v-else-if="communityList.length === 0" class="text-slate-500 py-8 text-center">
+          <p>暂无社区动态</p>
+        </div>
         <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           <CommunityCard
             v-for="c in communityList"
@@ -390,7 +535,8 @@ onMounted(() => {
             :author-name="c.authorName"
             :likes="c.likes"
             :comments="c.comments"
-            :note-id="c.id"
+            :type="c.type"
+            :target-id="c.targetId"
             @click="onCommunityClick"
           />
         </div>

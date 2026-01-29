@@ -1,15 +1,26 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { routesApi } from '../api'
 import type { PlanResponse } from '../api'
 import { useSpotStore } from '../store/spot'
+import { loadAmapScript, initAmapMap, addMarker, geocode } from '../utils/amap'
 
 const route = useRoute()
 const router = useRouter()
 const store = useSpotStore()
+
+// 返回上一页
+function goBack() {
+  if (window.history.length > 1) {
+    router.go(-1)
+  } else {
+    router.push('/')
+  }
+}
 
 const spotId = computed(() => {
   const id = route.params.id
@@ -33,9 +44,10 @@ const previewUrl = ref('')
 const distRef = ref<HTMLDivElement | null>(null)
 let distChart: echarts.ECharts | null = null
 
-// 地图（ECharts 代替真实地图，后续可替换为高德/百度）
+// 地图（高德地图）
 const mapRef = ref<HTMLDivElement | null>(null)
-let mapChart: echarts.ECharts | null = null
+let amapInstance: any = null
+let marker: any = null
 
 const displayIntro = computed(() => {
   const text = store.detail?.intro || ''
@@ -148,54 +160,126 @@ function renderRatingDist() {
   })
 }
 
-function renderMap() {
+async function renderMap() {
   const d = store.detail
   if (!mapRef.value || !d) return
-  if (!mapChart) mapChart = echarts.init(mapRef.value)
 
-  mapChart.setOption({
-    backgroundColor: '#020617',
-    grid: { left: 10, right: 10, top: 10, bottom: 10 },
-    xAxis: { type: 'value', show: false, min: 0, max: 100 },
-    yAxis: { type: 'value', show: false, min: 0, max: 100 },
-    tooltip: {
-      trigger: 'item',
-      backgroundColor: 'rgba(15,23,42,0.92)',
-      borderColor: '#334155',
-      textStyle: { color: '#e5e7eb' },
-      formatter: `<b>${d.name}</b><br/>${d.address}`,
-    },
-    series: [
-      {
-        type: 'scatter',
-        symbolSize: 16,
-        data: [[50, 55]],
-        itemStyle: { color: '#22c55e' },
-      },
-    ],
-    graphic: [
-      {
-        type: 'text',
-        left: 12,
-        top: 12,
-        style: { text: '地图示意（可替换高德/百度）', fill: '#cbd5f5', fontSize: 12 },
-      },
-    ],
-  })
+  try {
+    await loadAmapScript()
+
+    // 等待地图容器真正有尺寸（某些情况下首次进入页面容器短暂为 0x0，会导致地图“空白”）
+    const waitForSize = async (el: HTMLElement, maxFrames = 30) => {
+      for (let i = 0; i < maxFrames; i++) {
+        const rect = el.getBoundingClientRect()
+        if (rect.width > 0 && rect.height > 0) return
+        await new Promise<void>((r) => requestAnimationFrame(() => r()))
+      }
+    }
+    await waitForSize(mapRef.value)
+
+    // 1. 优先使用景点自身经纬度（来自后端或 mock），保证位置与景点一一对应
+    let center: [number, number] | null = null
+    if (typeof d.lng === 'number' && typeof d.lat === 'number' && !Number.isNaN(d.lng) && !Number.isNaN(d.lat)) {
+      center = [d.lng, d.lat]
+    }
+
+    // 2. 如果没有经纬度，再退回到地理编码（根据名称/地址估算位置）
+    if (!center) {
+      const geoCandidates = [
+        d.city && d.name ? `${d.city}${d.name}` : '',
+        d.city && d.address ? `${d.city}${d.address}` : '',
+        d.address ? d.address.split('·')[0] : '',
+        d.city || '',
+      ].filter((s) => !!s.trim())
+
+      for (const candidate of geoCandidates) {
+        const coords = await geocode(candidate)
+        if (coords) {
+          center = coords
+          break
+        }
+      }
+    }
+
+    // 3. 全部失败时，用默认北京中心，至少保证地图能出图
+    if (!center) {
+      center = [116.397428, 39.90923]
+    }
+
+    // 初始化地图（用 2D + normal，避免部分环境底图黑屏）
+    amapInstance = initAmapMap(mapRef.value, center, 15, {
+      viewMode: '2D',
+      mapStyle: 'amap://styles/normal',
+      forceTileLayer: true,
+    })
+
+    // 添加标记点
+    marker = addMarker(
+      amapInstance,
+      center,
+      d.name,
+      `<div style="padding: 8px; min-width: 200px;">
+        <b style="font-size: 14px; color: #0f172a;">${d.name}</b><br/>
+        <span style="font-size: 12px; color: #64748b;">${d.address}</span>
+      </div>`
+    )
+    // 设置标记样式
+    marker.setIcon(
+      new window.AMap.Icon({
+        size: new window.AMap.Size(40, 40),
+        image: `data:image/svg+xml;base64,${btoa(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+            <circle cx="20" cy="20" r="16" fill="#22c55e" stroke="#fff" stroke-width="3"/>
+            <circle cx="20" cy="20" r="8" fill="#fff"/>
+          </svg>`
+        )}`,
+      })
+    )
+    // 使用默认锚点，让圆形点精确位于实际经纬度位置
+    marker.setOffset(new window.AMap.Pixel(0, 0))
+
+    // 调整地图视野
+    // 等地图渲染完成再 fitView / resize，避免“黑屏但无报错”
+    amapInstance.on('complete', () => {
+      try {
+        amapInstance.setFitView([marker])
+        amapInstance.resize()
+      } catch {}
+    })
+  } catch (error) {
+    console.error('初始化地图失败:', error)
+    ElMessage.warning('地图加载失败，请检查高德地图API配置')
+  }
 }
 
 function resizeCharts() {
   distChart?.resize()
-  mapChart?.resize()
+  amapInstance?.getSize()
 }
 
 async function loadAll() {
   if (!spotId.value) return
-  await store.fetchDetail(spotId.value)
+  const q = route.query
+  const name = typeof q.name === 'string' ? q.name : ''
+  const location = typeof q.location === 'string' ? q.location : ''
+  const city = typeof q.city === 'string' ? q.city : ''
+  await store.fetchDetail(spotId.value, { name, location, city })
   await store.fetchComments(spotId.value)
   await store.fetchRecommend(spotId.value)
+  // 等待 DOM 根据 store.detail 完成条件渲染后，再初始化图表/地图
+  // 否则 distRef / mapRef 可能还是 null，导致“区域空白但无报错”
+  await nextTick()
+
   renderRatingDist()
-  renderMap()
+
+  // 加载高德地图API并渲染地图
+  try {
+    await loadAmapScript()
+    await renderMap()
+  } catch (error) {
+    console.warn('高德地图加载失败:', error)
+    ElMessage.warning('地图加载失败，请检查高德地图API配置')
+  }
 }
 
 watch(spotId, loadAll)
@@ -209,13 +293,22 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', resizeCharts)
   distChart?.dispose()
   distChart = null
-  mapChart?.dispose()
-  mapChart = null
+  // 清理高德地图实例
+  if (amapInstance) {
+    amapInstance.destroy()
+    amapInstance = null
+  }
+  marker = null
 })
 </script>
 
 <template>
   <div class="spot-page">
+    <!-- 返回按钮 -->
+    <div class="back-button-container">
+      <el-button :icon="ArrowLeft" circle @click="goBack" class="back-button" />
+    </div>
+
     <div v-if="store.loading" class="loading text-subtle">加载中…</div>
 
     <template v-else-if="store.detail">
@@ -315,12 +408,16 @@ onBeforeUnmount(() => {
             <div ref="mapRef" class="map" />
             <div class="traffic">
               <div class="traffic-item">
+                <span class="traffic-label">地址</span>
+                <span class="traffic-val">{{ store.detail.address }}</span>
+              </div>
+              <div class="traffic-item">
                 <span class="traffic-label">公交/地铁</span>
-                <span class="traffic-val">约 30–50 分钟（从市中心示意）</span>
+                <span class="traffic-val">约 30–50 分钟（从市中心）</span>
               </div>
               <div class="traffic-item">
                 <span class="traffic-label">自驾</span>
-                <span class="traffic-val">约 25–40 分钟 · 停车位充足（示意）</span>
+                <span class="traffic-val">约 25–40 分钟 · 停车位充足</span>
               </div>
               <div class="traffic-item">
                 <span class="traffic-label">打车</span>
@@ -473,6 +570,40 @@ onBeforeUnmount(() => {
     radial-gradient(circle at bottom right, #fef3c7 0, transparent 55%),
     #f8fafc;
   padding: 20px 16px 60px;
+  position: relative;
+}
+
+.back-button-container {
+  position: fixed;
+  top: 80px;
+  left: 20px;
+  z-index: 100;
+}
+
+.back-button {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+  transition: all 0.2s ease;
+}
+
+.back-button:hover {
+  background: rgba(255, 255, 255, 1);
+  transform: translateX(-2px);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.2);
+}
+
+@media (max-width: 768px) {
+  .back-button-container {
+    top: 70px;
+    left: 12px;
+  }
+  
+  .back-button {
+    width: 36px;
+    height: 36px;
+  }
 }
 
 .loading,
@@ -624,6 +755,7 @@ onBeforeUnmount(() => {
 }
 
 .map {
+  width: 100%;
   height: 320px;
   border-radius: 12px;
 }

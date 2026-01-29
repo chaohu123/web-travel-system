@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { api } from '../api'
+import { routesApi } from '../api'
 
 const destination = ref('')
 const startDate = ref('')
@@ -23,7 +23,7 @@ const onSubmit = async () => {
   loading.value = true
   errorMsg.value = ''
   try {
-    const resp = await api.post('/api/routes', {
+    const id = await routesApi.create({
       destination: destination.value,
       startDate: startDate.value,
       endDate: endDate.value,
@@ -32,7 +32,6 @@ const onSubmit = async () => {
       pace: pace.value,
       preferenceWeightsJson: preferenceWeightsJson.value || undefined,
     })
-    const id = resp.data.data
     router.push(`/routes/${id}`)
   } catch (e: any) {
     errorMsg.value = e.response?.data?.message || '创建行程失败'

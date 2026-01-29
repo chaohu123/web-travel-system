@@ -4,6 +4,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 
 import java.time.LocalDate;
 
@@ -56,12 +57,17 @@ public class CompanionDtos {
         private Integer budgetMin;
         private Integer budgetMax;
         private String status;
+        private Long creatorId;
         private String creatorNickname;
+        private String creatorAvatar;
+        private Integer creatorReputationLevel;
+        private String creatorTags; // 创建者的标签（逗号分隔）
         private Long relatedPlanId;
     }
 
     /** 结伴帖详情，含说明与可选关联小队 ID */
     @Data
+    @EqualsAndHashCode(callSuper = false)
     public static class PostDetail extends PostSummary {
         private String expectedMateDesc;
         /** 该帖子下第一个小队 ID（若有），用于详情页展示成员 */

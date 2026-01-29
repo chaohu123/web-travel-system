@@ -1,62 +1,101 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import FeedCard from '../components/FeedCard.vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import {
+  ElTabs,
+  ElTabPane,
+  ElRadioGroup,
+  ElRadioButton,
+  ElCard,
+  ElAvatar,
+  ElTag,
+  ElSkeleton,
+  ElEmpty,
+  ElButton,
+} from 'element-plus'
+import DynamicCard from '../components/DynamicCard.vue'
 import PublishFeedDialog from '../components/PublishFeedDialog.vue'
-import { useCommunityStore, TOPIC_TAGS, type RecommendedUser } from '../store/community'
+import {
+  useCommunityStore,
+  CATEGORY_TABS,
+  type CategoryTab,
+  type RecommendedUser,
+} from '../store/community'
 import { useAuthStore } from '../store'
-import { feedsApi, notesApi } from '../api'
+import { feedsApi } from '../api'
 import type { FeedItem } from '../api'
+import type { UserPublicProfile } from '../api'
+import { fetchUnifiedDynamicItems } from '../composables/useCommunityFeed'
+import { userApi } from '../api'
 
-const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const store = useCommunityStore()
 
 const publishVisible = ref(false)
 const loadingMore = ref(false)
-const feedPageSize = 10
-const displayedFeedCount = ref(feedPageSize)
+const pageSize = 12
+const displayCount = ref(pageSize)
+const sentinelRef = ref<HTMLElement | null>(null)
+/** 当前用户公开资料（关注/粉丝、旅行风格） */
+const meProfile = ref<UserPublicProfile | null>(null)
 
-const feedTypeTags = ['游记', '攻略', '经验分享']
+const activeTab = computed({
+  get: () => store.categoryTab,
+  set: (v: CategoryTab) => store.setCategoryTab(v),
+})
 
-watch(
-  () => route.query.q,
-  (q) => {
-    store.setSearchKeyword(typeof q === 'string' ? q : '')
-  },
-  { immediate: true }
+const sortOrder = computed({
+  get: () => store.sortOrder,
+  set: (v: 'latest' | 'hot') => store.setSortOrder(v),
+})
+
+const displayedItems = computed(() =>
+  store.filteredDynamicItems.slice(0, displayCount.value)
 )
 
-const displayedFeeds = computed(() => store.filteredFeeds.slice(0, displayedFeedCount.value))
-const noMore = computed(() => displayedFeedCount.value >= store.filteredFeeds.length)
+const noMore = computed(
+  () => displayCount.value >= store.filteredDynamicItems.length
+)
 
-function getFeedTypeTag(_item: FeedItem) {
-  return feedTypeTags[Math.floor(Math.random() * feedTypeTags.length)]
-}
+const isEmpty = computed(() => {
+  if (store.dynamicLoading) return false
+  return store.filteredDynamicItems.length === 0
+})
 
-async function loadFeeds() {
-  store.setFeedLoading(true)
+/** 关注 Tab：后端未提供关注流时始终展示空状态引导 */
+const isFollowingEmpty = computed(
+  () => store.categoryTab === 'following' && !store.dynamicLoading
+)
+
+const hotNotes = computed(() =>
+  [...(store.featuredNotes || [])]
+    .sort((a, b) => (b.likeCount ?? 0) - (a.likeCount ?? 0))
+    .slice(0, 5)
+)
+
+async function loadDynamicFeed() {
+  store.setDynamicLoading(true)
   try {
-    const list = await feedsApi.list()
-    store.setFeeds(list || [])
+    const items = await fetchUnifiedDynamicItems()
+    store.setDynamicItems(items)
+    displayCount.value = pageSize
   } catch {
-    store.setFeeds([])
+    store.setDynamicItems([])
   } finally {
-    store.setFeedLoading(false)
+    store.setDynamicLoading(false)
   }
 }
 
-async function loadNotes() {
+function loadNotes() {
   store.setNoteLoading(true)
-  try {
-    const list = await notesApi.list()
-    store.setFeaturedNotes(list || [])
-  } catch {
-    store.setFeaturedNotes([])
-  } finally {
-    store.setNoteLoading(false)
-  }
+  import('../api').then(({ notesApi }) =>
+    notesApi
+      .list()
+      .then((list) => store.setFeaturedNotes(list || []))
+      .catch(() => store.setFeaturedNotes([]))
+      .finally(() => store.setNoteLoading(false))
+  )
 }
 
 function loadRecommended() {
@@ -64,97 +103,155 @@ function loadRecommended() {
     { id: 1, nickname: '小鹿', avatar: '', creditLevel: '金牌', tags: ['摄影', '美食'] },
     { id: 2, nickname: '行者老张', avatar: '', creditLevel: '钻石', tags: ['自驾', '风光'] },
     { id: 3, nickname: '桃桃', avatar: '', creditLevel: '银牌', tags: ['休闲', '夜市'] },
-    { id: 4, nickname: '北极星', avatar: '', creditLevel: '金牌', tags: ['极光', '北欧'] },
   ]
   store.setRecommendedUsers(mock)
-}
-
-function onTopicClick(tag: string) {
-  store.setSelectedTopic(store.selectedTopic === tag ? null : tag)
-}
-
-function onSortChange(order: 'latest' | 'hot') {
-  store.setSortOrder(order)
 }
 
 function loadMore() {
   if (noMore.value || loadingMore.value) return
   loadingMore.value = true
   setTimeout(() => {
-    displayedFeedCount.value += feedPageSize
+    displayCount.value += pageSize
     loadingMore.value = false
-  }, 300)
+  }, 200)
 }
 
 function goNote(id: number) {
-  router.push(`/notes/${id}`)
+  router.push({ name: 'note-detail', params: { id: String(id) } })
+}
+
+function goUser(id: number) {
+  router.push({ name: 'user-profile', params: { id: String(id) } })
 }
 
 function onPublished(feed: FeedItem) {
   store.prependFeed(feed)
 }
 
+async function loadMeProfile() {
+  if (!auth.token || auth.userId == null) return
+  try {
+    meProfile.value = await userApi.getPublicProfile(auth.userId)
+  } catch {
+    meProfile.value = null
+  }
+}
+
+let scrollObserver: IntersectionObserver | null = null
+let observedSentinelEl: HTMLElement | null = null
+let stopSentinelWatch: (() => void) | null = null
+
 onMounted(async () => {
-  await Promise.all([loadFeeds(), loadNotes()])
+  await loadDynamicFeed()
+  loadNotes()
   loadRecommended()
+  loadMeProfile()
+
+  stopSentinelWatch = watch(sentinelRef, (el) => {
+    if (!el) return
+    scrollObserver = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return
+        if (noMore.value || loadingMore.value || store.dynamicLoading) return
+        loadMore()
+      },
+      { rootMargin: '200px', threshold: 0 }
+    )
+    scrollObserver.observe(el)
+    observedSentinelEl = el
+    stopSentinelWatch?.()
+  }, { flush: 'post' })
+  onUnmounted(() => {
+    stopSentinelWatch?.()
+    if (scrollObserver && observedSentinelEl) {
+      scrollObserver.unobserve(observedSentinelEl)
+      scrollObserver.disconnect()
+    }
+  })
+})
+
+watch(activeTab, () => {
+  displayCount.value = pageSize
+})
+watch(sortOrder, () => {
+  displayCount.value = pageSize
 })
 </script>
 
 <template>
   <div class="community-page">
-    <div class="community-body">
-      <main class="content-main">
-        <section class="topic-section">
-          <div class="topic-tags">
-            <span
-              v-for="tag in TOPIC_TAGS"
-              :key="tag"
-              class="topic-tag"
-              :class="{ active: store.selectedTopic === tag }"
-              @click="onTopicClick(tag)"
-            >
-              {{ tag }}
-            </span>
-          </div>
-          <div class="sort-tabs">
-            <button
-              type="button"
-              class="sort-tab"
-              :class="{ active: store.sortOrder === 'latest' }"
-              @click="onSortChange('latest')"
-            >
-              最新
-            </button>
-            <button
-              type="button"
-              class="sort-tab"
-              :class="{ active: store.sortOrder === 'hot' }"
-              @click="onSortChange('hot')"
-            >
-              最热
-            </button>
+    <div class="community-layout">
+      <main class="main-content">
+        <!-- 顶部筛选与排序 -->
+        <section class="filter-section">
+          <el-tabs v-model="activeTab" class="category-tabs">
+            <el-tab-pane
+              v-for="tab in CATEGORY_TABS"
+              :key="tab.value"
+              :label="tab.label"
+              :name="tab.value"
+            />
+          </el-tabs>
+          <div class="sort-row">
+            <el-radio-group v-model="sortOrder" size="default">
+              <el-radio-button value="latest">最新</el-radio-button>
+              <el-radio-button value="hot">最热</el-radio-button>
+            </el-radio-group>
           </div>
         </section>
 
+        <!-- 动态流：骨架屏 / 空状态 / 列表 -->
         <section class="feed-section">
-          <h2 class="block-title">热门动态</h2>
-          <div v-if="store.feedLoading" class="feed-loading">
-            <span class="spinner" />
-            <span>加载中...</span>
+          <div v-if="store.dynamicLoading" class="skeleton-list">
+            <el-card v-for="i in 4" :key="i" class="skeleton-card" shadow="never">
+              <el-skeleton :rows="6" animated />
+            </el-card>
           </div>
-          <div v-else-if="store.filteredFeeds.length === 0" class="empty-feed">
-            <el-empty description="暂无动态，来发布第一条吧～" />
+
+          <div v-else-if="isFollowingEmpty" class="empty-wrap">
+            <el-empty description="暂无关注动态">
+              <template #image>
+                <div class="empty-illus">👋</div>
+              </template>
+              <template #description>
+                <p class="empty-desc">登录后查看关注的人的动态，或去发现更多旅友</p>
+              </template>
+              <el-button v-if="auth.token" type="primary" @click="router.push({ name: 'companion-list' })">
+                发现结伴
+              </el-button>
+              <el-button v-else type="primary" @click="router.push({ name: 'login' })">
+                去登录
+              </el-button>
+            </el-empty>
           </div>
+
+          <div v-else-if="isEmpty" class="empty-wrap">
+            <el-empty description="当前分类暂无内容">
+              <template #image>
+                <div class="empty-illus">📷</div>
+              </template>
+              <template #description>
+                <p class="empty-desc">来发布第一条动态，或换个分类看看吧</p>
+              </template>
+              <el-button v-if="auth.token" type="primary" @click="publishVisible = true">
+                发布动态
+              </el-button>
+              <el-button v-else type="primary" @click="router.push({ name: 'login' })">
+                登录后发布
+              </el-button>
+            </el-empty>
+          </div>
+
           <div v-else class="feed-list">
-            <FeedCard
-              v-for="item in displayedFeeds"
-              :key="item.id"
-              :item="item"
-              :type-tag="getFeedTypeTag(item)"
+            <DynamicCard
+              v-for="d in displayedItems"
+              :key="`${d.type}-${d.id}`"
+              :item="d"
             />
-            <div class="load-more">
+            <div ref="sentinelRef" class="load-trigger" />
+            <div class="load-more-row">
               <el-button
-                v-if="!noMore && store.filteredFeeds.length > 0"
+                v-if="!noMore && store.filteredDynamicItems.length > 0"
                 :loading="loadingMore"
                 text
                 type="primary"
@@ -162,45 +259,43 @@ onMounted(async () => {
               >
                 加载更多
               </el-button>
-              <p v-else-if="store.filteredFeeds.length > 0" class="no-more">已经到底部</p>
+              <p v-else-if="store.filteredDynamicItems.length > 0" class="no-more">已经到底部</p>
             </div>
-          </div>
-        </section>
-
-        <section class="notes-section">
-          <h2 class="block-title">精选游记</h2>
-          <div v-if="store.noteLoading" class="notes-loading">加载中...</div>
-          <div v-else class="notes-scroll">
-            <article
-              v-for="n in store.filteredNotes"
-              :key="n.id"
-              class="note-card"
-              @click="goNote(n.id)"
-            >
-              <div class="note-cover">
-                <img
-                  :src="n.coverImage || `https://picsum.photos/seed/note${n.id}/320/200`"
-                  :alt="n.title"
-                  loading="lazy"
-                />
-              </div>
-              <h4 class="note-title">{{ n.title }}</h4>
-              <p class="note-meta">
-                {{ n.authorName || '旅友' }} · {{ n.destination || '旅行' }}
-              </p>
-              <p class="note-stats">0 浏览 · 0 点赞 · 0 评论</p>
-            </article>
           </div>
         </section>
       </main>
 
+      <!-- 右侧辅助区（PC） -->
       <aside class="sidebar">
-        <div class="sidebar-card">
-          <h3 class="sidebar-title">推荐用户</h3>
+        <!-- 当前用户卡片：头像、昵称、旅行风格、关注/粉丝 -->
+        <el-card v-if="auth.token" class="sidebar-card user-card" shadow="never">
+          <div class="user-card-inner" @click="router.push({ name: 'profile' })">
+            <el-avatar :size="48" class="user-avatar">
+              {{ (auth.nickname || meProfile?.nickname || '我').charAt(0) }}
+            </el-avatar>
+            <div class="user-meta">
+              <span class="user-name">{{ auth.nickname || meProfile?.nickname || '旅友' }}</span>
+              <div v-if="meProfile?.followersCount != null || meProfile?.followingCount != null" class="user-stats">
+                关注 {{ meProfile?.followingCount ?? 0 }} · 粉丝 {{ meProfile?.followersCount ?? 0 }}
+              </div>
+              <div v-if="meProfile?.preferences?.travelStyles?.length" class="user-tags">
+                <el-tag v-for="s in (meProfile?.preferences?.travelStyles ?? []).slice(0, 3)" :key="s" size="small" effect="plain" class="style-tag">{{ s }}</el-tag>
+              </div>
+              <el-tag size="small" type="warning" effect="plain" class="my-tag">我的主页</el-tag>
+            </div>
+          </div>
+        </el-card>
+
+        <!-- 推荐旅友 -->
+        <el-card class="sidebar-card" shadow="never">
+          <template #header>
+            <span class="sidebar-title">推荐旅友</span>
+          </template>
           <div
             v-for="u in store.recommendedUsers"
             :key="u.id"
             class="rec-user"
+            @click="goUser(u.id)"
           >
             <el-avatar :size="40" class="rec-avatar">
               {{ (u.nickname || 'U').charAt(0) }}
@@ -213,19 +308,41 @@ onMounted(async () => {
               </div>
             </div>
           </div>
-        </div>
-        <div class="sidebar-card">
-          <h3 class="sidebar-title">热门路线</h3>
-          <p class="sidebar-text text-subtle">完成路线规划后可在此展示推荐。</p>
-          <el-button type="primary" text @click="router.push('/routes')">去规划</el-button>
-        </div>
-        <div class="sidebar-card notice-card">
-          <h3 class="sidebar-title">社区公告</h3>
-          <p class="sidebar-text">分享真实旅行，友善交流。发布游记与攻略可获得更多曝光与旅友互动。</p>
-        </div>
+        </el-card>
+
+        <!-- 热门游记 -->
+        <el-card class="sidebar-card" shadow="never">
+          <template #header>
+            <span class="sidebar-title">热门游记</span>
+          </template>
+          <div v-if="store.noteLoading" class="sidebar-loading">加载中...</div>
+          <div v-else class="rec-list">
+            <div
+              v-for="n in hotNotes"
+              :key="n.id"
+              class="rec-item"
+              @click="goNote(n.id)"
+            >
+              <span class="rec-item-title">{{ n.title }}</span>
+              <span class="rec-item-meta">{{ n.likeCount ?? 0 }} 赞</span>
+            </div>
+          </div>
+        </el-card>
+
+        <!-- 热门路线 -->
+        <el-card class="sidebar-card" shadow="never">
+          <template #header>
+            <span class="sidebar-title">热门路线</span>
+          </template>
+          <p class="sidebar-text text-subtle">登录后在「我的路线」查看或创建路线</p>
+          <el-button type="primary" text @click="router.push({ name: 'routes' })">
+            去规划
+          </el-button>
+        </el-card>
       </aside>
     </div>
 
+    <!-- 发布 FAB -->
     <button
       v-if="auth.token"
       type="button"
@@ -248,10 +365,10 @@ onMounted(async () => {
 .community-page {
   min-height: 100vh;
   background: linear-gradient(180deg, #f0f9ff 0%, #f8fafc 18%);
-  padding-bottom: 80px;
+  padding-bottom: 88px;
 }
 
-.community-body {
+.community-layout {
   max-width: 1200px;
   margin: 0 auto;
   padding: 24px 20px;
@@ -262,108 +379,106 @@ onMounted(async () => {
 }
 
 @media (max-width: 1024px) {
-  .community-body {
+  .community-layout {
     grid-template-columns: 1fr;
   }
 }
 
-.content-main {
+.main-content {
   min-width: 0;
 }
 
-.topic-section {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-.topic-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.topic-tag {
-  padding: 8px 16px;
-  border-radius: 20px;
-  font-size: 14px;
-  color: #64748b;
+.filter-section {
+  margin-bottom: 20px;
   background: #fff;
-  border: 1px solid #e2e8f0;
-  cursor: pointer;
-  transition: background 0.2s, color 0.2s, border-color 0.2s;
+  border-radius: 16px;
+  padding: 16px 20px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
 }
 
-.topic-tag:hover,
-.topic-tag.active {
-  background: #ccfbf1;
+.category-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
+
+.category-tabs :deep(.el-tabs__item) {
+  font-size: 15px;
+}
+
+.category-tabs :deep(.el-tabs__nav-wrap::after) {
+  display: none;
+}
+
+.category-tabs :deep(.el-tabs__active-bar) {
+  background-color: #0d9488;
+}
+
+.category-tabs :deep(.el-tabs__item.is-active) {
   color: #0d9488;
-  border-color: #99f6e4;
 }
 
-.sort-tabs {
+.category-tabs :deep(.el-tabs__ink-bar) {
+  background-color: #0d9488;
+}
+
+.category-tabs :deep(.el-tabs__indicator) {
+  background-color: #0d9488;
+}
+
+.category-tabs :deep(.el-tabs__item:hover),
+.category-tabs :deep(.el-tabs__item.is-active) {
+  color: #0d9488;
+}
+
+.sort-row {
   display: flex;
-  gap: 4px;
+  justify-content: flex-end;
 }
 
-.sort-tab {
-  padding: 6px 14px;
+.sort-row :deep(.el-radio-button__inner) {
   border-radius: 8px;
-  font-size: 14px;
-  color: #64748b;
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  cursor: pointer;
 }
 
-.sort-tab.active {
+.sort-row :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
   background: #0d9488;
-  color: #fff;
   border-color: #0d9488;
 }
 
-.block-title {
-  margin: 0 0 16px;
-  font-size: 18px;
-  font-weight: 600;
-  color: #1e293b;
-}
-
 .feed-section {
-  margin-bottom: 32px;
+  min-height: 200px;
 }
 
-.feed-loading,
-.notes-loading {
-  padding: 40px;
-  text-align: center;
-  color: #64748b;
+.skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
-.feed-loading .spinner {
-  display: inline-block;
-  width: 20px;
-  height: 20px;
-  margin-right: 8px;
-  vertical-align: middle;
-  border: 2px solid #e2e8f0;
-  border-top-color: #0d9488;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+.skeleton-card {
+  border-radius: 16px;
+  padding: 20px;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+.skeleton-card :deep(.el-card__body) {
+  padding: 20px;
 }
 
-.empty-feed {
-  padding: 40px 20px;
+.empty-wrap {
   background: #fff;
   border-radius: 16px;
+  padding: 48px 24px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+.empty-illus {
+  font-size: 64px;
+  margin-bottom: 16px;
+  opacity: 0.8;
+}
+
+.empty-desc {
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 14px;
 }
 
 .feed-list {
@@ -372,7 +487,12 @@ onMounted(async () => {
   gap: 20px;
 }
 
-.load-more {
+.load-trigger {
+  height: 1px;
+  visibility: hidden;
+}
+
+.load-more-row {
   text-align: center;
   padding: 20px 0;
 }
@@ -383,96 +503,72 @@ onMounted(async () => {
   color: #94a3b8;
 }
 
-.notes-section {
-  margin-bottom: 24px;
-}
-
-.notes-scroll {
-  display: flex;
-  gap: 20px;
-  overflow-x: auto;
-  padding-bottom: 12px;
-}
-
-.notes-scroll::-webkit-scrollbar {
-  height: 8px;
-}
-
-.notes-scroll::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 4px;
-}
-
-.note-card {
-  flex: 0 0 240px;
-  background: #fff;
-  border-radius: 16px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-  overflow: hidden;
-  cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.note-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
-}
-
-.note-cover {
-  width: 100%;
-  height: 140px;
-  background: #f1f5f9;
-}
-
-.note-cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.note-title {
-  margin: 0;
-  padding: 12px 14px 4px;
-  font-size: 15px;
-  font-weight: 600;
-  color: #1e293b;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.note-meta {
-  margin: 0;
-  padding: 0 14px;
-  font-size: 13px;
-  color: #64748b;
-}
-
-.note-stats {
-  margin: 4px 14px 12px;
-  font-size: 12px;
-  color: #94a3b8;
-}
-
 .sidebar {
   position: sticky;
   top: 88px;
 }
 
 .sidebar-card {
-  background: #fff;
   border-radius: 16px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-  padding: 20px;
   margin-bottom: 20px;
+  overflow: hidden;
+}
+
+.sidebar-card :deep(.el-card__header) {
+  padding: 16px 20px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.sidebar-card :deep(.el-card__body) {
+  padding: 16px 20px;
 }
 
 .sidebar-title {
-  margin: 0 0 16px;
   font-size: 16px;
+}
+
+.user-card-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.user-avatar {
+  background: linear-gradient(135deg, #5eead4, #0d9488);
+  color: #fff;
+  font-weight: 600;
+}
+
+.user-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.user-name {
   font-weight: 600;
   color: #1e293b;
+}
+
+.user-stats {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.user-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.style-tag {
+  font-size: 11px;
+}
+
+.my-tag {
+  align-self: flex-start;
 }
 
 .rec-user {
@@ -481,6 +577,7 @@ onMounted(async () => {
   gap: 12px;
   padding: 10px 0;
   border-bottom: 1px solid #f1f5f9;
+  cursor: pointer;
 }
 
 .rec-user:last-child {
@@ -514,14 +611,49 @@ onMounted(async () => {
   margin-right: 6px;
 }
 
+.sidebar-loading {
+  font-size: 14px;
+  color: #94a3b8;
+}
+
+.rec-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rec-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.rec-item-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #334155;
+}
+
+.rec-item-meta {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #94a3b8;
+  margin-left: 8px;
+}
+
 .sidebar-text {
   margin: 0 0 12px;
   font-size: 14px;
   line-height: 1.5;
 }
 
-.notice-card {
-  background: linear-gradient(135deg, #f0fdfa 0%, #ccfbf1 100%);
+.text-subtle {
+  color: #64748b;
 }
 
 .fab {
@@ -552,9 +684,5 @@ onMounted(async () => {
   font-size: 28px;
   line-height: 1;
   font-weight: 300;
-}
-
-.text-subtle {
-  color: #64748b;
 }
 </style>

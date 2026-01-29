@@ -32,5 +32,12 @@ public class TravelNoteController {
     public ApiResponse<TravelNoteDtos.Detail> getOne(@PathVariable Long id) {
         return ApiResponse.success(travelNoteService.getOne(id));
     }
+
+    @PutMapping("/{id}")
+    public ApiResponse<Void> update(@PathVariable Long id,
+                                    @Valid @RequestBody TravelNoteDtos.UpdateRequest request) {
+        travelNoteService.update(id, request);
+        return ApiResponse.success();
+    }
 }
 
