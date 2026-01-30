@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { ArrowLeft } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowLeft, ChatDotRound, StarFilled, Share } from '@element-plus/icons-vue'
+import HeartIcon from '../components/HeartIcon.vue'
 import { commentsApi, interactionsApi, notesApi, routesApi, userApi } from '../api'
-import type { CommentItem, NoteSummary, PlanResponse, UserPublicProfile } from '../api'
+import type { CommentItem, NoteSummary, PlanResponse, RelatedSpotItem, UserPublicProfile } from '../api'
 import { useAuthStore, reputationLevelLabel } from '../store'
 
 interface NoteDetail {
@@ -34,6 +35,9 @@ const relatedRouteLoading = ref(false)
 
 const recommendedNotes = ref<NoteSummary[]>([])
 const recommendedLoading = ref(false)
+
+const relatedSpots = ref<RelatedSpotItem[]>([])
+const relatedSpotsLoading = ref(false)
 
 const comments = ref<CommentItem[]>([])
 const loadingComments = ref(false)
@@ -174,7 +178,11 @@ const fetchRecommendedNotes = async () => {
 const fetchInteractions = async () => {
   if (!note.value) return
   try {
+    console.debug('[NoteDetail] fetchInteractions before summary', {
+      noteId: note.value.id,
+    })
     const summary = await interactionsApi.summary('note', note.value.id)
+    console.debug('[NoteDetail] fetchInteractions summary result', summary)
     likeCount.value = summary.likeCount ?? 0
     favoriteCount.value = summary.favoriteCount ?? 0
     likedByMe.value = !!summary.likedByCurrentUser
@@ -184,7 +192,8 @@ const fetchInteractions = async () => {
       120,
       (summary.likeCount ?? 0) * 8 + (totalComments.value || 0) * 3,
     )
-  } catch {
+  } catch (e) {
+    console.error('[NoteDetail] fetchInteractions error', e)
     likeCount.value = 0
     favoriteCount.value = 0
     if (!viewCount.value) viewCount.value = 0
@@ -195,10 +204,33 @@ const fetchComments = async () => {
   if (!note.value) return
   loadingComments.value = true
   try {
-    comments.value = await commentsApi.list('note', note.value.id)
+    const raw = await commentsApi.list('note', note.value.id)
+    if (Array.isArray(raw)) {
+      comments.value = raw
+    } else if (raw && typeof raw === 'object' && Array.isArray((raw as { list?: unknown[] }).list)) {
+      comments.value = (raw as { list: unknown[] }).list as CommentItem[]
+    } else {
+      comments.value = []
+    }
+  } catch {
+    comments.value = []
   } finally {
     loadingComments.value = false
   }
+}
+
+/** 评论时间显示：将 ISO 格式 2026-01-30T13:02:09 显示为 2026-01-30-13:02:09 */
+function formatCommentTime(createdAt: unknown): string {
+  if (createdAt == null) return ''
+  if (typeof createdAt === 'string') {
+    return createdAt.replace('T', '-').replace(/\.\d{3,}/, '')
+  }
+  if (Array.isArray(createdAt) && createdAt.length >= 6) {
+    const [y, m, d, h, min, s] = createdAt
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${y}-${pad(m)}-${pad(d)}-${pad(h)}:${pad(min)}:${pad(s)}`
+  }
+  return String(createdAt)
 }
 
 const ensureLogin = () => {
@@ -239,17 +271,39 @@ const submitComment = async () => {
 const toggleLike = async () => {
   if (!note.value || interactionLoading.value) return
   if (!ensureLogin()) return
+  console.debug('[NoteDetail] toggleLike click', {
+    noteId: note.value.id,
+    beforeLiked: likedByMe.value,
+    beforeLikeCount: likeCount.value,
+  })
   interactionLoading.value = true
   try {
     if (likedByMe.value) {
+      console.debug('[NoteDetail] sending UNLIKE request', {
+        targetType: 'note',
+        targetId: note.value.id,
+      })
       await interactionsApi.unlike('note', note.value.id)
       likedByMe.value = false
       likeCount.value = Math.max(0, likeCount.value - 1)
     } else {
+      console.debug('[NoteDetail] sending LIKE request', {
+        targetType: 'note',
+        targetId: note.value.id,
+      })
       await interactionsApi.like('note', note.value.id)
       likedByMe.value = true
       likeCount.value += 1
     }
+    console.debug('[NoteDetail] toggleLike after success', {
+      noteId: note.value.id,
+      liked: likedByMe.value,
+      likeCount: likeCount.value,
+    })
+  } catch (e) {
+    console.error('[NoteDetail] toggleLike error', e)
+    interactionLoading.value = false
+    ElMessage.error(e?.message || '点赞操作失败')
   } finally {
     interactionLoading.value = false
   }
@@ -287,6 +341,48 @@ const handleShare = async () => {
 const handleReply = (c: CommentItem) => {
   replyingTo.value = c.userName || '旅友'
   newContent.value = `@${replyingTo.value} `
+}
+
+const commentLikeLoading = ref(false)
+const handleCommentLike = async (c: CommentItem) => {
+  if (!ensureLogin() || commentLikeLoading.value) return
+  commentLikeLoading.value = true
+  try {
+    if (c.likedByCurrentUser) {
+      await interactionsApi.unlike('comment', c.id)
+    } else {
+      await interactionsApi.like('comment', c.id)
+    }
+    await fetchComments()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.message || '操作失败')
+  } finally {
+    commentLikeLoading.value = false
+  }
+}
+
+const commentDeleteLoading = ref(false)
+const handleDeleteComment = async (c: CommentItem) => {
+  if (!note.value || commentDeleteLoading.value) return
+  try {
+    await ElMessageBox.confirm('确定要删除这条评论吗？', '删除评论', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  commentDeleteLoading.value = true
+  try {
+    await commentsApi.delete(c.id)
+    ElMessage.success('已删除')
+    await fetchComments()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.message || '删除失败')
+  } finally {
+    commentDeleteLoading.value = false
+  }
 }
 
 const appendEmoji = (emoji: string) => {
@@ -370,39 +466,32 @@ const goSpotDetail = (id: number) => {
   router.push({ name: 'spot-detail', params: { id } })
 }
 
-const recommendedSpots = computed(() => {
-  const dest = displayDestination.value
-  return [
-    {
-      id: 1,
-      name: `${dest} 核心景点 A`,
-      image: 'https://picsum.photos/seed/spotA/320/200',
-      distance: '距离市中心 1.2km',
-      score: 4.8,
-      description: '这里是该目的地的标志性景点，拥有悠久的历史文化和独特的自然风光，是游客必打卡的热门地点。',
-    },
-    {
-      id: 2,
-      name: `${dest} 打卡地 B`,
-      image: 'https://picsum.photos/seed/spotB/320/200',
-      distance: '距离酒店 800m',
-      score: 4.7,
-      description: '充满艺术气息的现代地标，融合了传统与现代元素，是摄影爱好者的天堂，适合悠闲漫步。',
-    },
-    {
-      id: 3,
-      name: `${dest} 小众秘境 C`,
-      image: 'https://picsum.photos/seed/spotC/320/200',
-      distance: '驾车约 25 分钟',
-      score: 4.9,
-      description: '远离喧嚣的隐秘之地，拥有原始的自然美景和宁静的氛围，是寻求心灵放松的理想去处。',
-    },
-  ]
-})
+const goToRouteDetail = (routeId: number) => {
+  router.push({ name: 'route-detail', params: { id: String(routeId) } })
+}
+
+/** 由后端根据关联路线自动生成的相关景点，前端仅请求并展示 */
+async function fetchRelatedSpots() {
+  if (!note.value?.id) return
+  relatedSpotsLoading.value = true
+  try {
+    relatedSpots.value = await notesApi.getRelatedSpots(note.value.id)
+  } catch {
+    relatedSpots.value = []
+  } finally {
+    relatedSpotsLoading.value = false
+  }
+}
 
 onMounted(async () => {
   await fetchDetail()
-  await Promise.all([fetchComments(), fetchInteractions(), fetchAuthorProfile(), fetchRelatedRoute()])
+  await Promise.all([
+    fetchComments(),
+    fetchInteractions(),
+    fetchAuthorProfile(),
+    fetchRelatedRoute(),
+    fetchRelatedSpots(),
+  ])
   await fetchRecommendedNotes()
 })
 </script>
@@ -509,23 +598,23 @@ onMounted(async () => {
                 </p>
               </div>
             </div>
-            <div class="note-author-actions">
+            <div class="note-author-actions" @click.stop>
               <el-button
                 v-if="!isSelf"
                 size="small"
                 :type="isFollowed ? 'default' : 'primary'"
                 round
-                @click.stop="handleFollowClick"
+                @click="handleFollowClick"
               >
-                {{ isFollowed ? '已关注' : '关注作者' }}
+                {{ isFollowed ? '已关注' : '关注' }}
               </el-button>
               <el-button
                 v-if="!isSelf"
                 size="small"
                 round
-                @click.stop="goChat"
+                @click="goChat"
               >
-                私信交流
+                私信
               </el-button>
               <el-button
                 v-if="isSelf"
@@ -646,41 +735,51 @@ onMounted(async () => {
           <div v-else-if="!comments.length" class="note-comment-empty">
             <el-empty description="暂无评论，做第一个分享旅途体验的人吧～" :image-size="80" />
           </div>
-          <div v-else class="note-comment-list">
-            <el-comment
-              v-for="c in comments"
-              :key="c.id"
-              :author="c.userName || '旅友'"
-              :content="c.content"
+          <ul v-else class="note-comment-list">
+            <li
+              v-for="(c, idx) in comments"
+              :key="c.id ?? `c-${idx}`"
+              class="note-comment-item"
             >
-              <template #avatar>
-                <el-avatar
-                  size="small"
-                  class="note-comment-avatar-clickable"
-                  @click.stop="handleCommentAvatarClick(c)"
-                  :style="{ cursor: c.userId ? 'pointer' : 'default' }"
-                >
+              <div
+                class="note-comment-avatar-clickable"
+                :style="{ cursor: c.userId ? 'pointer' : 'default' }"
+                @click.stop="handleCommentAvatarClick(c)"
+              >
+                <el-avatar size="small">
                   {{ (c.userName || '旅友').charAt(0) }}
                 </el-avatar>
-              </template>
-              <template #datetime>
-                <span class="note-comment-time">
-                  {{ c.createdAt }}
-                </span>
-              </template>
-              <template #actions>
-                <span
-                  class="note-comment-action"
-                  @click="handleReply(c)"
-                >
-                  回复
-                </span>
-                <span v-if="c.score" class="note-comment-score">
-                  评分 {{ c.score }} / 5
-                </span>
-              </template>
-            </el-comment>
-          </div>
+              </div>
+              <div class="note-comment-body">
+                <div class="note-comment-head">
+                  <span class="note-comment-author">{{ c.userName || '旅友' }}</span>
+                  <span class="note-comment-time">{{ formatCommentTime(c.createdAt) }}</span>
+                </div>
+                <p class="note-comment-content">{{ c.content ?? '' }}</p>
+                <div class="note-comment-footer">
+                  <span v-if="c.score != null" class="note-comment-score">{{ c.score }}分</span>
+                  <div class="note-comment-actions">
+                    <span
+                      class="note-comment-like"
+                      :class="{ 'note-comment-like--active': c.likedByCurrentUser }"
+                      @click="handleCommentLike(c)"
+                    >
+                      <HeartIcon :filled="!!c.likedByCurrentUser" class="note-comment-like-icon" />
+                      <span>{{ c.likeCount ?? 0 }}</span>
+                    </span>
+                    <span class="note-comment-action" @click="handleReply(c)">回复</span>
+                    <span
+                      v-if="auth.userId != null && c.userId === auth.userId"
+                      class="note-comment-action note-comment-delete"
+                      @click="handleDeleteComment(c)"
+                    >
+                      删除
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </li>
+          </ul>
         </section>
       </article>
 
@@ -746,7 +845,7 @@ onMounted(async () => {
               <div class="note-side-stat-label">获赞</div>
             </div>
           </div>
-          <div class="note-side-author-actions">
+          <div class="note-side-author-actions" @click.stop>
             <el-button
               v-if="!isSelf"
               size="small"
@@ -754,7 +853,7 @@ onMounted(async () => {
               round
               @click="handleFollowClick"
             >
-              {{ isFollowed ? '已关注' : '关注作者' }}
+              {{ isFollowed ? '已关注' : '关注' }}
             </el-button>
             <el-button
               v-if="!isSelf"
@@ -762,7 +861,7 @@ onMounted(async () => {
               round
               @click="goChat"
             >
-              私信交流
+              私信
             </el-button>
           </div>
         </section>
@@ -786,43 +885,47 @@ onMounted(async () => {
           </el-button>
         </section>
 
-        <!-- 相关景点推荐 -->
+        <!-- 相关景点推荐（由后端根据关联路线自动生成） -->
         <section class="note-side-card note-side-spots">
           <h3 class="note-side-title">相关景点推荐</h3>
           <p class="note-side-subtitle">
-            围绕本次旅程目的地，为你推荐附近热门景点。
+            {{ relatedSpots.length ? '来自本游记关联路线的景点/活动。' : '围绕本次旅程目的地，展示相关景点。' }}
           </p>
-          <ul class="note-side-spots-list">
+          <div v-if="relatedSpotsLoading" class="note-side-spots-loading">加载中...</div>
+          <ul v-else-if="relatedSpots.length" class="note-side-spots-list">
             <li
-              v-for="(s, index) in recommendedSpots"
+              v-for="(s, index) in relatedSpots"
               :key="s.id"
               class="note-side-spot-item"
-              @click="goSpotDetail(s.id)"
+              @click="s.routeId ? goToRouteDetail(s.routeId) : null"
             >
               <div class="note-side-spot-image-wrapper">
                 <el-image
-                  :src="s.image"
+                  :src="s.imageUrl || 'https://picsum.photos/seed/spot' + s.id + '/320/200'"
                   fit="cover"
                   :lazy="true"
                   class="note-side-spot-image"
-                  :preview-src-list="[s.image]"
+                  :preview-src-list="[s.imageUrl || 'https://picsum.photos/seed/spot' + s.id + '/320/200']"
                 />
                 <span class="note-side-spot-number">景点{{ index + 1 }}</span>
               </div>
               <div class="note-side-spot-content">
                 <h4 class="note-side-spot-name">{{ s.name }}</h4>
-                <p class="note-side-spot-description" v-if="s.description">
-                  {{ s.description }}
+                <p class="note-side-spot-description" v-if="s.type || s.timeRange">
+                  {{ [s.type, s.timeRange].filter(Boolean).join(' · ') }}
                 </p>
-                <div class="note-side-spot-meta" v-if="s.distance || s.score">
-                  <span v-if="s.distance" class="note-side-spot-distance">{{ s.distance }}</span>
-                  <el-tag v-if="s.score" size="small" type="warning" effect="plain" class="note-side-spot-score">
-                    ⭐ {{ s.score.toFixed(1) }}
-                  </el-tag>
+                <div class="note-side-spot-meta" v-if="s.location">
+                  <span class="note-side-spot-distance">{{ s.location }}</span>
                 </div>
               </div>
             </li>
           </ul>
+          <div v-else class="note-side-spots-empty">
+            <p class="note-side-spots-empty-title">暂无相关景点数据</p>
+            <p class="note-side-spots-empty-desc">
+              您可：① 在编辑游记时「关联路线」，系统将自动展示该路线中的景点/活动；② 或在此处插入相关景点名称、距离、评分等（后续版本支持）。
+            </p>
+          </div>
         </section>
 
         <!-- 推荐游记 -->
@@ -873,14 +976,14 @@ onMounted(async () => {
               @click="toggleLike"
               :disabled="interactionLoading"
             >
-              <span class="note-action-icon">👍</span>
+              <HeartIcon class="note-action-icon" :filled="likedByMe" />
               <span class="note-action-count">{{ likeCount || 0 }}</span>
             </el-button>
             <el-button
               text
               @click="scrollToComments"
             >
-              <span class="note-action-icon">💬</span>
+              <el-icon class="note-action-icon"><ChatDotRound /></el-icon>
               <span class="note-action-count">{{ totalComments || 0 }}</span>
             </el-button>
             <el-button
@@ -889,11 +992,11 @@ onMounted(async () => {
               @click="toggleFavorite"
               :disabled="interactionLoading"
             >
-              <span class="note-action-icon">⭐</span>
+              <el-icon class="note-action-icon"><StarFilled /></el-icon>
               <span class="note-action-count">{{ favoriteCount || 0 }}</span>
             </el-button>
             <el-button text @click="handleShare">
-              <span class="note-action-icon">🔗</span>
+              <el-icon class="note-action-icon"><Share /></el-icon>
               <span>分享</span>
             </el-button>
           </div>
@@ -1455,21 +1558,101 @@ onMounted(async () => {
 
 .note-comment-list {
   margin-top: 20px;
+  list-style: none;
+  padding: 0;
+  margin-left: 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-.note-comment-list :deep(.el-comment) {
+.note-comment-item {
+  display: flex;
+  gap: 12px;
   padding: 16px;
   border-radius: 12px;
   background: #f8fafc;
   transition: all 0.2s ease;
 }
 
-.note-comment-list :deep(.el-comment:hover) {
+.note-comment-item:hover {
   background: #f1f5f9;
-  transform: translateX(4px);
+}
+
+.note-comment-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.note-comment-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.note-comment-author {
+  font-weight: 600;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.note-comment-content {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #334155;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.note-comment-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.note-comment-score {
+  margin-right: auto;
+  font-size: 12px;
+  color: #f97316;
+  font-weight: 500;
+}
+
+.note-comment-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.note-comment-like {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #94a3b8;
+  user-select: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.note-comment-like:hover {
+  color: #f43f5e;
+  background: rgba(244, 63, 94, 0.08);
+}
+
+.note-comment-like--active {
+  color: #f43f5e;
+}
+
+.note-comment-like .note-comment-like-icon {
+  font-size: 14px;
 }
 
 .note-comment-time {
@@ -1489,13 +1672,6 @@ onMounted(async () => {
 .note-comment-action:hover {
   background: rgba(15, 118, 110, 0.1);
   color: #0d9488;
-}
-
-.note-comment-score {
-  font-size: 12px;
-  color: #f97316;
-  margin-left: 8px;
-  font-weight: 500;
 }
 
 .note-comment-avatar-clickable {
@@ -1721,6 +1897,34 @@ onMounted(async () => {
 /* 相关景点列表形式 - 带图片和简介 */
 .note-side-spots {
   margin-top: 0;
+}
+
+.note-side-spots-empty {
+  margin-top: 12px;
+  padding: 16px;
+  background: #f8fafc;
+  border-radius: 12px;
+  border: 1px dashed #e2e8f0;
+}
+
+.note-side-spots-empty-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.note-side-spots-empty-desc {
+  margin: 0;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+.note-side-spots-loading {
+  margin-top: 12px;
+  font-size: 14px;
+  color: #94a3b8;
 }
 
 .note-side-spots-list {

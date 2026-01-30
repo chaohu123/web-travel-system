@@ -9,11 +9,14 @@ import {
   type ChatCompanionPayload,
 } from '../store/chat'
 import { useAuthStore } from '../store'
+import { useMessageStore } from '../store/message'
+import { messageApi } from '../api'
 
 const route = useRoute()
 const router = useRouter()
 const chatStore = useChatStore()
 const auth = useAuthStore()
+const messageStore = useMessageStore()
 
 const contactId = computed(() => {
   const raw = route.params.id
@@ -103,6 +106,8 @@ async function sendText() {
   if (!content || sending.value) return
   const ok = await ensureLogin()
   if (!ok) return
+  const peerId = Number(contactId.value)
+  if (!peerId || !auth.userId) return
 
   if (detectSensitive(content)) {
     await ElMessageBox.alert(
@@ -114,21 +119,19 @@ async function sendText() {
 
   sending.value = true
   draft.value = ''
-  const msg = chatStore.addTextMessage(sessionId.value, 'me', content)
-  scrollToBottom()
-
-  // 准实时占位：模拟对方回复 + 偶发失败
-  setTimeout(() => {
-    const fail = Math.random() < 0.06
-    if (fail) {
-      chatStore.markFailed(sessionId.value, msg.id)
-      sending.value = false
-      return
-    }
-    chatStore.addTextMessage(sessionId.value, 'other', '收到～我们先对齐预算和每天可用时间，再定具体景点。')
-    sending.value = false
+  try {
+    await messageApi.sendChatMessage(peerId, content)
+    const list = await messageApi.getChatMessages(peerId)
+    chatStore.setMessagesFromApi(sessionId.value, list, auth.userId!)
+    // 发送消息后刷新未读数（因为对方会收到新消息，未读数可能变化）
+    await messageStore.fetchOverview().catch(() => {})
     scrollToBottom()
-  }, 650)
+  } catch (e: any) {
+    ElMessage.error(e?.message || '发送失败，请稍后重试')
+    draft.value = content
+  } finally {
+    sending.value = false
+  }
 }
 
 function retrySend(m: ChatMessage) {
@@ -240,15 +243,54 @@ function handleClear() {
     .catch(() => {})
 }
 
-onMounted(() => {
+async function loadChatMessages() {
+  const peerId = Number(contactId.value)
+  if (!peerId || contactId.value === '0') return
+  if (auth.userId) {
+    try {
+      const list = await messageApi.getChatMessages(peerId)
+      const oldLength = messages.value.length
+      chatStore.setMessagesFromApi(sessionId.value, list, auth.userId)
+      await messageApi.clearChatUnread(peerId).catch(() => {})
+      // 如果有新消息，滚动到底部
+      if (list.length > oldLength) {
+        scrollToBottom()
+      }
+    } catch {
+      // 未登录或网络错误，保持空列表
+    }
+  }
   if (messages.value.length === 0) {
     chatStore.addSystemTip(sessionId.value, '提示：平台不展示第三方联系方式，请勿在未确认前添加微信或转账。')
   }
   scrollToBottom(true)
+}
+
+let pollTimer: number | null = null
+
+onMounted(() => {
+  loadChatMessages()
+  // 每5秒轮询一次新消息（仅在聊天页时）
+  pollTimer = window.setInterval(() => {
+    const peerId = Number(contactId.value)
+    if (peerId && auth.userId) {
+      messageApi.getChatMessages(peerId).then((list) => {
+        const oldLength = messages.value.length
+        chatStore.setMessagesFromApi(sessionId.value, list, auth.userId!)
+        if (list.length > oldLength) {
+          scrollToBottom()
+        }
+      }).catch(() => {})
+    }
+  }, 5000)
 })
 
 onBeforeUnmount(() => {
   if (previewImageUrl.value) URL.revokeObjectURL(previewImageUrl.value)
+  if (pollTimer != null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
 })
 </script>
 

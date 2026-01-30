@@ -78,6 +78,8 @@ public class CompanionDtos {
     public static class TeamMemberItem {
         private Long userId;
         private String userName;
+        private String avatar;
+        private Integer reputationLevel;
         private String role;
         private String state;
     }
@@ -92,6 +94,10 @@ public class CompanionDtos {
         private LocalDate startDate;
         private LocalDate endDate;
         private Long relatedPlanId;
+        /** 结伴帖最大人数，便于小队页展示 */
+        private Integer maxPeople;
+        private Integer budgetMin;
+        private Integer budgetMax;
         private java.util.List<TeamMemberItem> members;
     }
 }

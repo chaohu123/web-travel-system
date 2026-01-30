@@ -3,7 +3,10 @@ package com.example.travel.social.controller;
 import com.example.travel.common.api.ApiResponse;
 import com.example.travel.social.dto.MessageDtos;
 import com.example.travel.social.service.MessageService;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/messages")
@@ -68,6 +71,33 @@ public class MessageController {
     @PostMapping("/conversations/{id}/clear-unread")
     public ApiResponse<Void> clearConversationUnread(@PathVariable Long id) {
         messageService.clearConversationUnread(id);
+        return ApiResponse.success();
+    }
+
+    /**
+     * 发送私信给指定用户
+     */
+    @PostMapping("/chat/{peerUserId}")
+    public ApiResponse<MessageDtos.ChatMessageItem> sendChatMessage(
+            @PathVariable Long peerUserId,
+            @Valid @RequestBody MessageDtos.SendChatRequest body) {
+        return ApiResponse.success(messageService.sendChatMessage(peerUserId, body.getContent()));
+    }
+
+    /**
+     * 获取与指定用户的私信消息列表（按时间正序）
+     */
+    @GetMapping("/chat/{peerUserId}/messages")
+    public ApiResponse<List<MessageDtos.ChatMessageItem>> getChatMessages(@PathVariable Long peerUserId) {
+        return ApiResponse.success(messageService.getChatMessagesWithPeer(peerUserId));
+    }
+
+    /**
+     * 进入与指定用户的聊天页时清空该会话未读数
+     */
+    @PostMapping("/chat/{peerUserId}/clear-unread")
+    public ApiResponse<Void> clearChatUnread(@PathVariable Long peerUserId) {
+        messageService.clearConversationUnreadByPeer(peerUserId);
         return ApiResponse.success();
     }
 }

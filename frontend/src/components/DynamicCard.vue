@@ -2,6 +2,8 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElDropdown, ElDropdownMenu, ElDropdownItem } from 'element-plus'
+import { CircleCheck, CircleCheckFilled, ChatDotRound, Star, StarFilled, Share } from '@element-plus/icons-vue'
+import HeartIcon from './HeartIcon.vue'
 import type { UnifiedDynamicItem } from '../api/types'
 import type { CommentItem } from '../api'
 import { commentsApi, interactionsApi } from '../api'
@@ -311,19 +313,19 @@ watch(
     <!-- 互动操作区 -->
     <div class="card-actions">
       <button type="button" class="action-btn" :class="{ active: liked, liked: liked }" @click="toggleLike">
-        <span class="icon">{{ liked ? '❤️' : '🤍' }}</span>
+        <HeartIcon class="icon" :filled="liked" />
         <span>{{ likeCount > 0 ? likeCount : '点赞' }}</span>
       </button>
       <button type="button" class="action-btn" @click="toggleCommentPreview">
-        <span class="icon">💬</span>
+        <el-icon class="icon"><ChatDotRound /></el-icon>
         <span>评论 {{ commentCount > 0 ? commentCount : '' }}</span>
       </button>
       <button type="button" class="action-btn" :class="{ active: favorited }" @click="toggleFavorite">
-        <span class="icon">{{ favorited ? '⭐' : '☆' }}</span>
+        <el-icon class="icon"><component :is="favorited ? StarFilled : Star" /></el-icon>
         <span>收藏</span>
       </button>
       <button type="button" class="action-btn" @click="doShare">
-        <span class="icon">🔗</span>
+        <el-icon class="icon"><Share /></el-icon>
         <span>分享</span>
       </button>
     </div>

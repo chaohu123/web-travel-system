@@ -19,5 +19,10 @@ public interface PrivateConversationRepository extends JpaRepository<PrivateConv
      * 查找包含当前用户的所有会话（用于统计未读数）
      */
     List<PrivateConversation> findByUser1OrUser2(User user1, User user2);
+
+    /**
+     * 根据两个用户 ID 查找会话（约定 user1 为较小 ID，user2 为较大 ID）
+     */
+    java.util.Optional<PrivateConversation> findByUser1_IdAndUser2_Id(Long user1Id, Long user2Id);
 }
 

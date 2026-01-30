@@ -15,8 +15,9 @@ export type ProfileTab =
   | 'settings'
   | 'security'
 
+/** type 与后端 targetType 一致：note / route / companion / feed */
 export interface FavoriteItem {
-  type: 'route' | 'note' | 'user'
+  type: 'note' | 'route' | 'companion' | 'feed'
   id: number
   title?: string
   destination?: string

@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { notesApi, interactionsApi } from '../api'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import HeartIcon from '../components/HeartIcon.vue'
+import { ChatDotRound, Delete } from '@element-plus/icons-vue'
+import { notesApi } from '../api'
+import { useAuthStore } from '../store'
 import type { NoteSummary } from '../api'
 
 const notes = ref<NoteSummary[]>([])
 const loading = ref(false)
 const router = useRouter()
+const auth = useAuthStore()
 
 const fetchNotes = async () => {
   loading.value = true
@@ -19,6 +24,24 @@ const fetchNotes = async () => {
 
 const goDetail = (id: number) => {
   router.push(`/notes/${id}`)
+}
+
+const handleDelete = (e: Event, note: NoteSummary) => {
+  e.stopPropagation()
+  ElMessageBox.confirm('确定要删除这篇游记吗？删除后无法恢复。', '删除确认', {
+    type: 'warning',
+    confirmButtonText: '删除',
+    cancelButtonText: '取消',
+    confirmButtonClass: 'el-button--danger',
+  })
+    .then(() => notesApi.delete(note.id))
+    .then(() => {
+      ElMessage.success('已删除')
+      fetchNotes()
+    })
+    .catch((err) => {
+      if (err !== 'cancel') ElMessage.error(err?.message || '删除失败')
+    })
 }
 
 // 简单的排序（按点赞数或时间排序）
@@ -68,10 +91,19 @@ onMounted(fetchNotes)
             <span v-if="note.createdAt"> · {{ note.createdAt }}</span>
           </p>
           <p class="stats">
-            <span>♥ {{ note.likeCount ?? 0 }}</span>
-            <span>💬 {{ note.commentCount ?? 0 }}</span>
+            <span><HeartIcon :filled="true" class="stat-icon" /> {{ note.likeCount ?? 0 }}</span>
+            <span><el-icon class="stat-icon"><ChatDotRound /></el-icon> {{ note.commentCount ?? 0 }}</span>
           </p>
         </div>
+        <el-button
+          v-if="auth.userId != null && note.authorId === auth.userId"
+          class="btn-delete"
+          type="danger"
+          :icon="Delete"
+          circle
+          size="small"
+          @click="handleDelete($event, note)"
+        />
       </article>
     </div>
   </div>
@@ -104,6 +136,7 @@ onMounted(fetchNotes)
 }
 
 .note-card {
+  position: relative;
   display: flex;
   gap: 12px;
   padding: 10px 12px;
@@ -113,6 +146,17 @@ onMounted(fetchNotes)
 
 .note-card:hover {
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+}
+
+.btn-delete {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  opacity: 0.85;
+}
+
+.note-card:hover .btn-delete {
+  opacity: 1;
 }
 
 .cover {
@@ -145,6 +189,13 @@ onMounted(fetchNotes)
   color: #9ca3af;
   display: flex;
   gap: 10px;
+  align-items: center;
+}
+
+.stats .stat-icon {
+  margin-right: 4px;
+  vertical-align: middle;
+  font-size: 14px;
 }
 
 .empty {

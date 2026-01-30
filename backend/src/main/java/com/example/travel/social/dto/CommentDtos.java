@@ -1,5 +1,6 @@
 package com.example.travel.social.dto;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -37,8 +38,13 @@ public class CommentDtos {
         private String userName;
         private String content;
         private Integer score;
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss")
         private LocalDateTime createdAt;
         private java.util.List<String> tags;
+        /** 评论点赞数 */
+        private Long likeCount;
+        /** 当前用户是否已点赞该评论 */
+        private Boolean likedByCurrentUser;
     }
 
     @Data

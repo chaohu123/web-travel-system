@@ -46,6 +46,8 @@ const communityList = ref<
     type: 'note' | 'route' | 'companion' | 'feed'
     /** 对应内容 ID，用于跳转 */
     targetId: number
+    /** 当前用户是否已点赞 */
+    liked?: boolean
   }>
 >([])
 
@@ -207,7 +209,7 @@ function mapPostToBuddy(p: CompanionPostSummary) {
   }
 }
 
-function mapNoteToCommunity(n: NoteSummary) {
+function mapNoteToCommunity(n: NoteSummary & { likedByCurrentUser?: boolean }) {
   return {
     id: n.id,
     cover: n.coverImage || 'https://picsum.photos/seed/note' + n.id + '/400/250',
@@ -218,6 +220,7 @@ function mapNoteToCommunity(n: NoteSummary) {
     comments: n.commentCount ?? 0,
     type: 'note' as const,
     targetId: n.id,
+    liked: n.likedByCurrentUser,
   }
 }
 
@@ -232,17 +235,27 @@ async function loadUserDetail() {
 }
 
 async function loadRoutes() {
-  // 路线推荐需要登录，未登录时不显示
-  if (!auth.token) {
-    routeList.value = []
-    return
-  }
   routesLoading.value = true
   try {
-    const list = await routesApi.myPlans()
-    routeList.value = list.map(mapPlanToCard)
+    // 首页推荐优先使用热门路线；为空或失败时有多级兜底
+    const hotList = await routesApi.hot(4)
+    if (hotList && hotList.length) {
+      routeList.value = hotList.map(mapPlanToCard)
+    } else if (auth.token) {
+      // 热门为空时，登录用户退回到「我的行程」
+      const mine = await routesApi.myPlans().catch(() => [])
+      if (mine && mine.length) {
+        routeList.value = mine.map(mapPlanToCard)
+      } else {
+        routeList.value = MOCK_ROUTES
+      }
+    } else {
+      // 未登录且后端暂无数据，用前端 mock 填充
+      routeList.value = MOCK_ROUTES
+    }
   } catch {
-    routeList.value = []
+    // 接口异常时也使用 mock 保证有内容可看
+    routeList.value = MOCK_ROUTES
   } finally {
     routesLoading.value = false
   }
@@ -282,19 +295,29 @@ async function loadCommunity() {
       feedsApi.list().catch(() => []),
     ])
     
-    // 处理游记：获取点赞数和评论数
+    // 处理游记：获取点赞数、评论数和点赞状态
     const enrichedNotes = await Promise.all(
       notes.map(async (n) => {
         try {
           const summary = await interactionsApi.summary('note', n.id)
-          return { ...n, likeCount: summary.likeCount, commentCount: n.commentCount ?? 0 }
+          return { 
+            ...n, 
+            likeCount: summary.likeCount, 
+            commentCount: n.commentCount ?? 0,
+            likedByCurrentUser: summary.likedByCurrentUser ?? false,
+          }
         } catch {
-          return { ...n, likeCount: n.likeCount ?? 0, commentCount: n.commentCount ?? 0 }
+          return { 
+            ...n, 
+            likeCount: n.likeCount ?? 0, 
+            commentCount: n.commentCount ?? 0,
+            likedByCurrentUser: false,
+          }
         }
       }),
     )
     
-    // 处理动态：获取点赞数和评论数
+    // 处理动态：获取点赞数、评论数和点赞状态
     const enrichedFeeds = await Promise.all(
       feeds.map(async (f) => {
         try {
@@ -309,6 +332,7 @@ async function loadCommunity() {
             comments: 0, // 动态暂时没有评论数
             type: 'feed' as const,
             targetId: f.id,
+            liked: summary.likedByCurrentUser ?? false,
           }
         } catch {
           return {
@@ -321,6 +345,7 @@ async function loadCommunity() {
             comments: 0,
             type: 'feed' as const,
             targetId: f.id,
+            liked: false,
           }
         }
       }),
@@ -384,6 +409,15 @@ function onCommunityClick(_payload: { title: string; likes: number; comments: nu
   // 具体跳转逻辑已经在 CommunityCard 内部根据 type + targetId 统一处理
 }
 
+function onCommunityLikeChange(payload: { liked: boolean; likes: number }, itemId: number, itemType: 'note' | 'route' | 'companion' | 'feed') {
+  // 更新列表中对应项的点赞状态和点赞数
+  const item = communityList.value.find((c) => c.id === itemId && c.type === itemType)
+  if (item) {
+    item.likes = payload.likes
+    item.liked = payload.liked
+  }
+}
+
 onMounted(() => {
   loadUserDetail()
   loadRoutes()
@@ -433,13 +467,13 @@ onMounted(() => {
         </el-carousel>
       </section>
 
-      <!-- 为你推荐：路线 / 游记 -->
-      <section v-if="auth.token" class="py-14 max-w-6xl mx-auto px-4 sm:px-6">
+      <!-- 为你推荐：热门路线（热度最高 4 条） -->
+      <section class="py-14 max-w-6xl mx-auto px-4 sm:px-6">
         <h2 class="home-section-title">为你推荐</h2>
-        <p class="home-section-subtitle">根据你的偏好，推荐适合的路线与游记</p>
+        <p class="home-section-subtitle">当前热度最高的 4 条路线，先看看大家都在玩什么</p>
         <div v-if="routesLoading" class="text-slate-500 py-8">加载中...</div>
         <div v-else-if="routeList.length === 0" class="text-slate-500 py-8 text-center">
-          <p>还没有创建过路线，<router-link to="/routes/create" class="text-indigo-600 hover:underline">立即规划你的第一条路线</router-link></p>
+          <p>暂无热门路线</p>
         </div>
         <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           <RouteCard
@@ -537,7 +571,9 @@ onMounted(() => {
             :comments="c.comments"
             :type="c.type"
             :target-id="c.targetId"
+            :liked="c.liked"
             @click="onCommunityClick"
+            @like-change="(payload) => onCommunityLikeChange(payload, c.id, c.type)"
           />
         </div>
       </section>

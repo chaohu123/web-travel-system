@@ -4,7 +4,8 @@ import { useRouter } from 'vue-router'
 import EditProfileDialog from '../components/EditProfileDialog.vue'
 import { useProfileStore, type ProfileTab } from '../store/profile'
 import { useAuthStore, reputationLevelLabel } from '../store'
-import { userApi, routesApi, companionApi, feedsApi } from '../api'
+import { userApi, routesApi, companionApi, feedsApi, interactionsApi } from '../api'
+import type { FavoriteItem } from '../store/profile'
 import type { MeDetail } from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -70,8 +71,19 @@ async function loadFeeds() {
   }
 }
 
-function loadFavorites() {
-  store.setFavorites([])
+async function loadFavorites() {
+  try {
+    const list = await interactionsApi.myFavorites()
+    const items: FavoriteItem[] = (list || []).map((item) => ({
+      type: item.targetType as FavoriteItem['type'],
+      id: item.targetId,
+      title: undefined,
+      destination: undefined,
+    }))
+    store.setFavorites(items)
+  } catch {
+    store.setFavorites([])
+  }
 }
 
 onMounted(async () => {
@@ -134,6 +146,40 @@ function handleDeactivate() {
   }).then(() => {
     ElMessage.info('账号注销功能需后端支持，请联系管理员')
   }).catch(() => {})
+}
+
+const removingFavoriteId = ref<string | null>(null)
+
+async function handleRemoveFavorite(f: FavoriteItem) {
+  const key = `${f.type}-${f.id}`
+  if (removingFavoriteId.value === key) return
+  removingFavoriteId.value = key
+  try {
+    await interactionsApi.unfavorite(f.type, f.id)
+    store.removeFavorite(f.type, f.id)
+    ElMessage.success('已取消收藏')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '取消收藏失败，请稍后重试')
+  } finally {
+    removingFavoriteId.value = null
+  }
+}
+
+function favoriteTypeLabel(type: string) {
+  const map: Record<string, string> = {
+    note: '游记',
+    route: '路线',
+    companion: '结伴',
+    feed: '动态',
+  }
+  return map[type] || type
+}
+
+function goToFavorite(f: FavoriteItem) {
+  if (f.type === 'note') router.push({ name: 'note-detail', params: { id: f.id } })
+  else if (f.type === 'route') router.push({ name: 'route-detail', params: { id: f.id } })
+  else if (f.type === 'companion') router.push({ name: 'companion-detail', params: { id: f.id } })
+  else if (f.type === 'feed') router.push({ name: 'feed', query: { highlight: f.id } })
 }
 </script>
 
@@ -252,8 +298,16 @@ function handleDeactivate() {
           </div>
           <div v-else class="card-grid">
             <div v-for="f in store.favorites" :key="`${f.type}-${f.id}`" class="fav-card">
-              <span>{{ f.title || f.destination || f.nickname }}</span>
-              <el-button text type="danger" size="small" @click.stop="store.removeFavorite(f.type, f.id)">取消收藏</el-button>
+              <span class="fav-card-title" @click="goToFavorite(f)">{{ f.title || f.destination || f.nickname || `${favoriteTypeLabel(f.type)} #${f.id}` }}</span>
+              <el-button
+                text
+                type="danger"
+                size="small"
+                :loading="removingFavoriteId === (f.type + '-' + f.id)"
+                @click.stop="handleRemoveFavorite(f)"
+              >
+                取消收藏
+              </el-button>
             </div>
           </div>
         </section>
@@ -549,6 +603,16 @@ function handleDeactivate() {
   border-radius: 12px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
+}
+
+.fav-card-title {
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+.fav-card-title:hover {
+  color: var(--el-color-primary);
 }
 
 .feed-list {

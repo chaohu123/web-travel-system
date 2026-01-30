@@ -48,6 +48,33 @@ export const useChatStore = defineStore('chat', () => {
     return ensureSession(sessionId)
   }
 
+  /**
+   * 从后端拉取的消息列表覆盖当前会话（用于进入聊天页 / 发送后刷新）
+   * items 为 API 返回的 ChatMessageItemDTO[]，currentUserId 用于区分 me/other
+   */
+  function setMessagesFromApi(
+    sessionId: string,
+    items: { id: number; senderId: number; content: string; type: string; createdAt: string | number[] }[],
+    currentUserId: number
+  ) {
+    const toISO = (v: string | number[]): string => {
+      if (typeof v === 'string') return v
+      if (Array.isArray(v) && v.length >= 6) {
+        const [y, mo, d, h = 0, min = 0, s = 0] = v
+        return new Date(y, (mo as number) - 1, d as number, h as number, min as number, s as number).toISOString()
+      }
+      return new Date().toISOString()
+    }
+    const list: ChatMessage[] = items.map((m) => ({
+      id: m.id,
+      from: m.senderId === currentUserId ? ('me' as const) : ('other' as const),
+      type: (m.type === 'text' || m.type === 'image' || m.type === 'route' || m.type === 'companion' ? m.type : 'text') as ChatMessageType,
+      content: m.content,
+      createdAt: toISO(m.createdAt),
+    }))
+    sessions.value[sessionId] = list
+  }
+
   function appendMessage(sessionId: string, msg: Omit<ChatMessage, 'id' | 'createdAt'> & { id?: number; createdAt?: string }) {
     const list = ensureSession(sessionId)
     const full: ChatMessage = {
@@ -112,6 +139,7 @@ export const useChatStore = defineStore('chat', () => {
     sessions,
     lastMessageMap,
     getMessages,
+    setMessagesFromApi,
     appendMessage,
     addTextMessage,
     addRouteCard,

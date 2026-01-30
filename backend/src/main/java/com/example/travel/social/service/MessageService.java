@@ -4,10 +4,13 @@ import com.example.travel.common.exception.BusinessException;
 import com.example.travel.social.dto.MessageDtos;
 import com.example.travel.social.entity.InteractionMessage;
 import com.example.travel.social.entity.PrivateConversation;
+import com.example.travel.social.entity.PrivateMessage;
 import com.example.travel.social.repository.InteractionMessageRepository;
 import com.example.travel.social.repository.PrivateConversationRepository;
+import com.example.travel.social.repository.PrivateMessageRepository;
 import com.example.travel.user.entity.User;
 import com.example.travel.user.entity.UserProfile;
+import com.example.travel.user.repository.UserFollowRepository;
 import com.example.travel.user.repository.UserProfileRepository;
 import com.example.travel.user.repository.UserRepository;
 import jakarta.transaction.Transactional;
@@ -26,17 +29,23 @@ public class MessageService {
 
     private final InteractionMessageRepository interactionMessageRepository;
     private final PrivateConversationRepository privateConversationRepository;
+    private final PrivateMessageRepository privateMessageRepository;
     private final UserRepository userRepository;
     private final UserProfileRepository userProfileRepository;
+    private final UserFollowRepository userFollowRepository;
 
     public MessageService(InteractionMessageRepository interactionMessageRepository,
                           PrivateConversationRepository privateConversationRepository,
+                          PrivateMessageRepository privateMessageRepository,
                           UserRepository userRepository,
-                          UserProfileRepository userProfileRepository) {
+                          UserProfileRepository userProfileRepository,
+                          UserFollowRepository userFollowRepository) {
         this.interactionMessageRepository = interactionMessageRepository;
         this.privateConversationRepository = privateConversationRepository;
+        this.privateMessageRepository = privateMessageRepository;
         this.userRepository = userRepository;
         this.userProfileRepository = userProfileRepository;
+        this.userFollowRepository = userFollowRepository;
     }
 
     private User getCurrentUser() {
@@ -180,6 +189,8 @@ public class MessageService {
                 String name = peer.getEmail() != null ? peer.getEmail() : peer.getPhone();
                 dto.setPeerNickname(name);
             }
+            // 对方是否为当前用户的粉丝（对方关注了当前用户）
+            dto.setPeerIsFollower(userFollowRepository.existsByFollowerAndFollowee(peer, current));
         }
         dto.setLastMessagePreview(conv.getLastMessagePreview());
         dto.setLastMessageTime(conv.getLastMessageTime());
@@ -230,6 +241,108 @@ public class MessageService {
             throw BusinessException.badRequest("会话不属于当前用户");
         }
         privateConversationRepository.save(conv);
+    }
+
+    /**
+     * 发送私信给指定用户，若会话不存在则创建
+     */
+    @Transactional
+    public MessageDtos.ChatMessageItem sendChatMessage(Long peerUserId, String content) {
+        if (content == null || content.isBlank()) {
+            throw BusinessException.badRequest("消息内容不能为空");
+        }
+        User current = getCurrentUser();
+        if (current.getId().equals(peerUserId)) {
+            throw BusinessException.badRequest("不能给自己发私信");
+        }
+        User peer = userRepository.findById(peerUserId)
+                .orElseThrow(() -> BusinessException.badRequest("对方用户不存在"));
+
+        Long u1Id = Math.min(current.getId(), peerUserId);
+        Long u2Id = Math.max(current.getId(), peerUserId);
+        PrivateConversation conv = privateConversationRepository
+                .findByUser1_IdAndUser2_Id(u1Id, u2Id)
+                .orElseGet(() -> {
+                    PrivateConversation newConv = new PrivateConversation();
+                    newConv.setUser1(userRepository.findById(u1Id).orElseThrow());
+                    newConv.setUser2(userRepository.findById(u2Id).orElseThrow());
+                    newConv.setUser1UnreadCount(0);
+                    newConv.setUser2UnreadCount(0);
+                    return privateConversationRepository.save(newConv);
+                });
+
+        PrivateMessage msg = new PrivateMessage();
+        msg.setConversation(conv);
+        msg.setSender(current);
+        msg.setContent(content.trim());
+        msg.setType("text");
+        msg = privateMessageRepository.save(msg);
+
+        String preview = content.length() > 50 ? content.substring(0, 50) + "…" : content;
+        conv.setLastMessagePreview(preview);
+        conv.setLastMessageTime(msg.getCreatedAt());
+        // 给接收方（peer）增加未读数：由于 user1 是较小 ID，user2 是较大 ID
+        // 如果 peerUserId == u1Id，则 peer 是 user1；如果 peerUserId == u2Id，则 peer 是 user2
+        if (u1Id.equals(peerUserId)) {
+            conv.setUser1UnreadCount((conv.getUser1UnreadCount() == null ? 0 : conv.getUser1UnreadCount()) + 1);
+        } else if (u2Id.equals(peerUserId)) {
+            conv.setUser2UnreadCount((conv.getUser2UnreadCount() == null ? 0 : conv.getUser2UnreadCount()) + 1);
+        }
+        privateConversationRepository.save(conv);
+
+        MessageDtos.ChatMessageItem dto = new MessageDtos.ChatMessageItem();
+        dto.setId(msg.getId());
+        dto.setSenderId(current.getId());
+        dto.setContent(msg.getContent());
+        dto.setType(msg.getType());
+        dto.setCreatedAt(msg.getCreatedAt());
+        return dto;
+    }
+
+    /**
+     * 获取与指定用户的私信消息列表（按时间正序）
+     */
+    public List<MessageDtos.ChatMessageItem> getChatMessagesWithPeer(Long peerUserId) {
+        User current = getCurrentUser();
+        if (current.getId().equals(peerUserId)) {
+            throw BusinessException.badRequest("无法与自己会话");
+        }
+        Long u1Id = Math.min(current.getId(), peerUserId);
+        Long u2Id = Math.max(current.getId(), peerUserId);
+        PrivateConversation conv = privateConversationRepository
+                .findByUser1_IdAndUser2_Id(u1Id, u2Id)
+                .orElse(null);
+        if (conv == null) {
+            return List.of();
+        }
+        List<PrivateMessage> list = privateMessageRepository.findByConversationOrderByCreatedAtAsc(conv);
+        return list.stream().map(m -> {
+            MessageDtos.ChatMessageItem dto = new MessageDtos.ChatMessageItem();
+            dto.setId(m.getId());
+            dto.setSenderId(m.getSender() != null ? m.getSender().getId() : null);
+            dto.setContent(m.getContent());
+            dto.setType(m.getType() != null ? m.getType() : "text");
+            dto.setCreatedAt(m.getCreatedAt());
+            return dto;
+        }).collect(Collectors.toList());
+    }
+
+    /**
+     * 按对方用户清空当前用户在该会话的未读数（进入聊天页时调用）
+     */
+    @Transactional
+    public void clearConversationUnreadByPeer(Long peerUserId) {
+        User current = getCurrentUser();
+        Long u1Id = Math.min(current.getId(), peerUserId);
+        Long u2Id = Math.max(current.getId(), peerUserId);
+        privateConversationRepository.findByUser1_IdAndUser2_Id(u1Id, u2Id).ifPresent(conv -> {
+            if (conv.getUser1() != null && conv.getUser1().getId().equals(current.getId())) {
+                conv.setUser1UnreadCount(0);
+            } else {
+                conv.setUser2UnreadCount(0);
+            }
+            privateConversationRepository.save(conv);
+        });
     }
 }
 

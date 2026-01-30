@@ -1,5 +1,11 @@
 <script setup lang="ts">
+import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { CircleCheckFilled, ChatDotRound } from '@element-plus/icons-vue'
+import HeartIcon from './HeartIcon.vue'
+import { useAuthStore } from '../store'
+import { interactionsApi } from '../api'
 
 const props = withDefaults(
   defineProps<{
@@ -21,19 +27,51 @@ const props = withDefaults(
      * 建议使用 type + targetId
      */
     noteId?: number
+    /** 当前用户是否已点赞（可选，如果不传则会在组件内部获取） */
+    liked?: boolean
   }>(),
   {
     type: 'note',
     targetId: undefined,
     noteId: undefined,
+    liked: undefined,
   },
 )
 
-const emit = defineEmits<{ click: [payload: { title: string; likes: number; comments: number }] }>()
+const emit = defineEmits<{ 
+  click: [payload: { title: string; likes: number; comments: number }]
+  likeChange: [payload: { liked: boolean; likes: number }]
+}>()
 const router = useRouter()
+const auth = useAuthStore()
+
+const liked = ref(props.liked ?? false)
+const likeCount = ref(props.likes)
+
+// 监听 props.liked 变化
+watch(() => props.liked, (newVal) => {
+  if (newVal !== undefined) {
+    liked.value = newVal
+  }
+})
+
+// 监听 props.likes 变化
+watch(() => props.likes, (newVal) => {
+  likeCount.value = newVal
+})
+
+// 如果没有传入 liked prop，尝试从 API 获取
+if (props.liked === undefined && auth.token && props.targetId) {
+  interactionsApi.summary(props.type, props.targetId).then((summary) => {
+    liked.value = summary.likedByCurrentUser ?? false
+    likeCount.value = summary.likeCount ?? props.likes
+  }).catch(() => {
+    // ignore
+  })
+}
 
 function handleClick() {
-  emit('click', { title: props.title, likes: props.likes, comments: props.comments })
+  emit('click', { title: props.title, likes: likeCount.value, comments: props.comments })
 
   // 统一根据内容类型跳转到对应详情页
   let finalType = props.type
@@ -64,6 +102,40 @@ function handleClick() {
       break
   }
 }
+
+function ensureLogin(cb: () => void) {
+  if (!auth.token) {
+    ElMessage.warning('请先登录后再操作')
+    router.push({ name: 'login', query: { redirect: router.currentRoute.value.fullPath } })
+    return
+  }
+  cb()
+}
+
+async function toggleLike(event: Event) {
+  event.stopPropagation() // 阻止事件冒泡，避免触发卡片点击
+  
+  ensureLogin(async () => {
+    const finalType = props.type
+    const finalId = props.targetId ?? props.noteId
+    
+    if (!finalId) return
+    
+    try {
+      if (liked.value) {
+        await interactionsApi.unlike(finalType, finalId)
+        likeCount.value = Math.max(0, likeCount.value - 1)
+      } else {
+        await interactionsApi.like(finalType, finalId)
+        likeCount.value += 1
+      }
+      liked.value = !liked.value
+      emit('likeChange', { liked: liked.value, likes: likeCount.value })
+    } catch (e: any) {
+      ElMessage.error(e.message || '操作失败')
+    }
+  })
+}
 </script>
 
 <template>
@@ -85,8 +157,17 @@ function handleClick() {
           <span class="text-sm text-slate-600">{{ authorName }}</span>
         </div>
         <div class="flex items-center gap-3 text-sm text-slate-500">
-          <span>♥ {{ likes }}</span>
-          <span>💬 {{ comments }}</span>
+          <span 
+            class="inline-flex items-center gap-1 cursor-pointer hover:text-teal-600 transition-colors"
+            @click.stop="toggleLike"
+          >
+            <HeartIcon :filled="liked" class="align-middle" />
+            {{ likeCount }}
+          </span>
+          <span class="inline-flex items-center gap-1">
+            <el-icon class="align-middle"><ChatDotRound /></el-icon>
+            {{ comments }}
+          </span>
         </div>
       </div>
     </div>

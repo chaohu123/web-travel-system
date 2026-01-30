@@ -8,6 +8,7 @@ import { routesApi } from '../api'
 import type { PlanResponse } from '../api'
 import { useSpotStore } from '../store/spot'
 import { loadAmapScript, initAmapMap, addMarker, geocode } from '../utils/amap'
+import { formatDateTime } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -461,7 +462,7 @@ onBeforeUnmount(() => {
                   <div class="c-top">
                     <span class="c-name">{{ c.userName }}</span>
                     <el-rate v-if="c.score != null" :model-value="c.score" disabled allow-half size="small" />
-                    <span class="c-time">{{ c.createdAt }}</span>
+                    <span class="c-time">{{ formatDateTime(c.createdAt) }}</span>
                   </div>
                   <p class="c-content">{{ c.content }}</p>
                   <div class="c-photos">

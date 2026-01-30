@@ -3,9 +3,13 @@ package com.example.travel.route.service;
 import com.example.travel.common.exception.BusinessException;
 import com.example.travel.route.dto.TripPlanDtos;
 import com.example.travel.route.entity.TripPlan;
+import com.example.travel.companion.repository.CompanionPostRepository;
 import com.example.travel.route.repository.TripActivityRepository;
 import com.example.travel.route.repository.TripDayRepository;
 import com.example.travel.route.repository.TripPlanRepository;
+import com.example.travel.social.repository.ContentFavoriteRepository;
+import com.example.travel.social.repository.ContentLikeRepository;
+import com.example.travel.social.repository.TravelNoteRepository;
 import com.example.travel.user.entity.User;
 import com.example.travel.user.repository.UserRepository;
 import jakarta.transaction.Transactional;
@@ -18,6 +22,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -29,15 +34,27 @@ public class RoutePlanService {
     private final TripPlanRepository tripPlanRepository;
     private final TripDayRepository tripDayRepository;
     private final TripActivityRepository tripActivityRepository;
+    private final ContentLikeRepository contentLikeRepository;
+    private final ContentFavoriteRepository contentFavoriteRepository;
+    private final TravelNoteRepository travelNoteRepository;
+    private final CompanionPostRepository companionPostRepository;
     private final UserRepository userRepository;
 
     public RoutePlanService(TripPlanRepository tripPlanRepository,
                             TripDayRepository tripDayRepository,
                             TripActivityRepository tripActivityRepository,
+                            ContentLikeRepository contentLikeRepository,
+                            ContentFavoriteRepository contentFavoriteRepository,
+                            TravelNoteRepository travelNoteRepository,
+                            CompanionPostRepository companionPostRepository,
                             UserRepository userRepository) {
         this.tripPlanRepository = tripPlanRepository;
         this.tripDayRepository = tripDayRepository;
         this.tripActivityRepository = tripActivityRepository;
+        this.contentLikeRepository = contentLikeRepository;
+        this.contentFavoriteRepository = contentFavoriteRepository;
+        this.travelNoteRepository = travelNoteRepository;
+        this.companionPostRepository = companionPostRepository;
         this.userRepository = userRepository;
     }
 
@@ -89,9 +106,48 @@ public class RoutePlanService {
                     .mapToInt(d -> d.getActivities() == null ? 0 : d.getActivities().size())
                     .sum();
             log.debug("[RoutePlan] Loaded plan {} with {} days, {} activities", id, dayCount, actCount);
+            if (resp.getDays() != null) {
+                for (TripPlanDtos.Day d : resp.getDays()) {
+                    int n = d.getActivities() != null ? d.getActivities().size() : 0;
+                    String names = d.getActivities() == null ? "" : d.getActivities().stream()
+                            .map(a -> a.getName() != null ? a.getName() : (a.getLocation() != null ? a.getLocation() : "?"))
+                            .limit(3)
+                            .reduce((a, b) -> a + "," + b)
+                            .orElse("");
+                    log.debug("[RoutePlan]   dayIndex={} (type={}) activities={} names=[{}]",
+                            d.getDayIndex(), d.getDayIndex() != null ? d.getDayIndex().getClass().getSimpleName() : "null", n, names);
+                }
+            }
         }
         return resp;
     }
+
+    /**
+     * 热门路线：按热度（点赞+收藏）倒序返回前 N 条。
+     * 为避免复杂 SQL，本版本从最新 50 条路线中计算热度（数据量小的场景足够）。
+     */
+    public List<TripPlanDtos.PlanResponse> listHotPlans(int limit) {
+        int n = Math.max(1, Math.min(limit <= 0 ? 4 : limit, 50));
+        List<TripPlan> candidates = tripPlanRepository.findTop50ByOrderByCreatedAtDesc();
+        if (candidates.isEmpty()) return List.of();
+
+        // 计算热度：likeCount + favoriteCount
+        List<ScoredPlan> scored = candidates.stream().map(p -> {
+            long likes = contentLikeRepository.countByTargetTypeAndTargetId("route", p.getId());
+            long favs = contentFavoriteRepository.countByTargetTypeAndTargetId("route", p.getId());
+            return new ScoredPlan(p, likes + favs);
+        }).collect(Collectors.toList());
+
+        return scored.stream()
+                .sorted(Comparator
+                        .comparingLong(ScoredPlan::score).reversed()
+                        .thenComparing(sp -> sp.plan().getCreatedAt(), Comparator.nullsLast(Comparator.reverseOrder())))
+                .limit(n)
+                .map(sp -> toResponseWithoutActivities(sp.plan()))
+                .collect(Collectors.toList());
+    }
+
+    private record ScoredPlan(TripPlan plan, long score) {}
 
     private TripPlanDtos.PlanResponse toResponseWithoutActivities(TripPlan plan) {
         TripPlanDtos.PlanResponse resp = new TripPlanDtos.PlanResponse();
@@ -104,6 +160,9 @@ public class RoutePlanService {
         resp.setPeopleCount(plan.getPeopleCount());
         resp.setPace(plan.getPace());
         resp.setDays(List.of());
+        long usedByNotes = travelNoteRepository.countByRelatedPlanId(plan.getId());
+        long usedByCompanion = companionPostRepository.countByRelatedPlanId(plan.getId());
+        resp.setUsedCount(usedByNotes + usedByCompanion);
         return resp;
     }
 

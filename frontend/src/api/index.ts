@@ -16,11 +16,13 @@ import type {
   FeedItem,
   CommentItem,
   UserPublicProfile,
+  FollowingItem,
   PageResult,
   InteractionSummary,
   InteractionMessageDTO,
   ConversationSummaryDTO,
   MessageOverview,
+  ChatMessageItemDTO,
 } from './types'
 
 export const api: AxiosInstance = axios.create({
@@ -97,6 +99,22 @@ export const messageApi = {
   clearConversationUnread(conversationId: number) {
     return api.post<ApiResponse<void>>(`/messages/conversations/${conversationId}/clear-unread`, {}).then(unwrap)
   },
+  /** 发送私信 - POST /api/messages/chat/{peerUserId} */
+  sendChatMessage(peerUserId: number, content: string) {
+    return api
+      .post<ApiResponse<ChatMessageItemDTO>>(`/messages/chat/${peerUserId}`, { content })
+      .then(unwrap)
+  },
+  /** 获取与指定用户的私信消息列表 - GET /api/messages/chat/{peerUserId}/messages */
+  getChatMessages(peerUserId: number) {
+    return api
+      .get<ApiResponse<ChatMessageItemDTO[]>>(`/messages/chat/${peerUserId}/messages`)
+      .then(unwrap)
+  },
+  /** 进入与指定用户的聊天页时清空该会话未读数 - POST /api/messages/chat/{peerUserId}/clear-unread */
+  clearChatUnread(peerUserId: number) {
+    return api.post<ApiResponse<void>>(`/messages/chat/${peerUserId}/clear-unread`, {}).then(unwrap)
+  },
 }
 
 /** 用户 */
@@ -110,6 +128,10 @@ export const userApi = {
   /** 对外展示的个人主页信息 */
   getPublicProfile(userId: number) {
     return api.get<ApiResponse<UserPublicProfile>>(`/users/${userId}/homepage`).then(unwrap)
+  },
+  /** 我关注的人列表（用于邀请成员等） */
+  myFollowing() {
+    return api.get<ApiResponse<FollowingItem[]>>('/users/me/following').then(unwrap)
   },
   /** 关注某个用户 */
   follow(userId: number) {
@@ -146,6 +168,10 @@ export const routesApi = {
   myPlans() {
     return api.get<ApiResponse<PlanResponse[]>>('/routes/my').then(unwrap)
   },
+  /** 热门路线（未登录可访问） */
+  hot(limit: number = 4) {
+    return api.get<ApiResponse<PlanResponse[]>>('/routes/hot', { params: { limit } }).then(unwrap)
+  },
   getOne(id: number) {
     return api.get<ApiResponse<PlanResponse>>(`/routes/${id}`).then(unwrap)
   },
@@ -169,6 +195,26 @@ export const companionApi = {
   recommend(limit: number = 3) {
     return api.get<ApiResponse<CompanionPostSummary[]>>('/companion/posts/recommend', { params: { limit } }).then(unwrap)
   },
+  /** 小队详情 */
+  getTeam(teamId: number) {
+    return api.get<ApiResponse<import('./types').TeamDetail>>(`/companion/teams/${teamId}`).then(unwrap)
+  },
+  /** 退出小队 */
+  quitTeam(teamId: number) {
+    return api.post<ApiResponse<void>>(`/companion/teams/${teamId}/quit`, {}).then(unwrap)
+  },
+  /** 解散小队（仅队长） */
+  dissolveTeam(teamId: number) {
+    return api.post<ApiResponse<void>>(`/companion/teams/${teamId}/dissolve`, {}).then(unwrap)
+  },
+  /** 队长移除指定成员 */
+  removeMember(teamId: number, userId: number) {
+    return api.delete<ApiResponse<void>>(`/companion/teams/${teamId}/members/${userId}`).then(unwrap)
+  },
+  /** 队长将小队分享给指定用户，被分享人可查看该行程 */
+  shareTeam(teamId: number, userId: number) {
+    return api.post<ApiResponse<void>>(`/companion/teams/${teamId}/share`, {}, { params: { userId } }).then(unwrap)
+  },
 }
 
 /** 游记 */
@@ -189,8 +235,15 @@ export const notesApi = {
       createdAt?: string
     }>>(`/notes/${id}`).then(unwrap)
   },
+  /** 游记详情页「相关景点推荐」，由后端根据关联路线自动生成 */
+  getRelatedSpots(noteId: number) {
+    return api.get<ApiResponse<import('./types').RelatedSpotItem[]>>(`/notes/${noteId}/related-spots`).then(unwrap)
+  },
   update(id: number, body: { title: string; content: string; coverImage?: string; relatedPlanId?: number; destination?: string }) {
     return api.put<ApiResponse<void>>(`/notes/${id}`, body).then(unwrap)
+  },
+  delete(id: number) {
+    return api.delete<ApiResponse<void>>(`/notes/${id}`).then(unwrap)
   },
 }
 
@@ -212,6 +265,15 @@ export const commentsApi = {
   create(body: { targetType: string; targetId: number; content: string; score?: number }) {
     return api.post<ApiResponse<void>>('/comments', body).then(unwrap)
   },
+  delete(id: number) {
+    return api.delete<ApiResponse<void>>(`/comments/${id}`).then(unwrap)
+  },
+}
+
+/** 我的收藏项（与后端 /interactions/favorites 一致） */
+export interface MyFavoriteItem {
+  targetType: string
+  targetId: number
 }
 
 /** 点赞 & 收藏 */
@@ -229,6 +291,10 @@ export const interactionsApi = {
     return api
       .delete<ApiResponse<void>>('/interactions/favorites', { params: { targetType, targetId } })
       .then(unwrap)
+  },
+  /** 当前用户收藏列表 */
+  myFavorites() {
+    return api.get<ApiResponse<MyFavoriteItem[]>>('/interactions/favorites').then(unwrap)
   },
   summary(targetType: string, targetId: number) {
     return api

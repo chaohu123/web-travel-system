@@ -1,20 +1,24 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import {
   ElTabs,
   ElTabPane,
   ElRadioGroup,
   ElRadioButton,
+  ElPagination,
   ElCard,
   ElAvatar,
   ElTag,
   ElSkeleton,
   ElEmpty,
   ElButton,
+  ElInput,
 } from 'element-plus'
+import { Search } from '@element-plus/icons-vue'
 import DynamicCard from '../components/DynamicCard.vue'
 import PublishFeedDialog from '../components/PublishFeedDialog.vue'
+import PublishDynamicDialog from '../components/PublishDynamicDialog.vue'
 import {
   useCommunityStore,
   CATEGORY_TABS,
@@ -22,21 +26,19 @@ import {
   type RecommendedUser,
 } from '../store/community'
 import { useAuthStore } from '../store'
-import { feedsApi } from '../api'
-import type { FeedItem } from '../api'
-import type { UserPublicProfile } from '../api'
+import { feedsApi, routesApi, userApi } from '../api'
+import type { FeedItem, UserPublicProfile, PlanResponse } from '../api'
 import { fetchUnifiedDynamicItems } from '../composables/useCommunityFeed'
-import { userApi } from '../api'
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
 const store = useCommunityStore()
 
 const publishVisible = ref(false)
-const loadingMore = ref(false)
-const pageSize = 12
-const displayCount = ref(pageSize)
-const sentinelRef = ref<HTMLElement | null>(null)
+const publishDynamicVisible = ref(false)
+const pageSize = 5
+const currentPage = ref(1)
 /** 当前用户公开资料（关注/粉丝、旅行风格） */
 const meProfile = ref<UserPublicProfile | null>(null)
 
@@ -50,13 +52,17 @@ const sortOrder = computed({
   set: (v: 'latest' | 'hot') => store.setSortOrder(v),
 })
 
-const displayedItems = computed(() =>
-  store.filteredDynamicItems.slice(0, displayCount.value)
-)
+const searchInput = computed({
+  get: () => store.searchKeyword,
+  set: (v: string) => store.setSearchKeyword(v),
+})
 
-const noMore = computed(
-  () => displayCount.value >= store.filteredDynamicItems.length
-)
+const totalItems = computed(() => store.filteredDynamicItems.length)
+
+const displayedItems = computed(() => {
+  const start = (currentPage.value - 1) * pageSize
+  return store.filteredDynamicItems.slice(start, start + pageSize)
+})
 
 const isEmpty = computed(() => {
   if (store.dynamicLoading) return false
@@ -74,12 +80,35 @@ const hotNotes = computed(() =>
     .slice(0, 5)
 )
 
+const hotRoutes = ref<PlanResponse[]>([])
+const routeLoading = ref(false)
+
+async function loadHotRoutes() {
+  routeLoading.value = true
+  try {
+    hotRoutes.value = await routesApi.hot(5)
+  } catch {
+    hotRoutes.value = []
+  } finally {
+    routeLoading.value = false
+  }
+}
+
+function formatRouteDateRange(r: PlanResponse) {
+  if (!r.startDate || !r.endDate) return ''
+  return `${r.startDate} ~ ${r.endDate}`
+}
+
+function goRoute(id: number) {
+  router.push({ name: 'route-detail', params: { id: String(id) } })
+}
+
 async function loadDynamicFeed() {
   store.setDynamicLoading(true)
   try {
     const items = await fetchUnifiedDynamicItems()
     store.setDynamicItems(items)
-    displayCount.value = pageSize
+    currentPage.value = 1
   } catch {
     store.setDynamicItems([])
   } finally {
@@ -107,13 +136,8 @@ function loadRecommended() {
   store.setRecommendedUsers(mock)
 }
 
-function loadMore() {
-  if (noMore.value || loadingMore.value) return
-  loadingMore.value = true
-  setTimeout(() => {
-    displayCount.value += pageSize
-    loadingMore.value = false
-  }, 200)
+function handlePageChange(page: number) {
+  currentPage.value = page
 }
 
 function goNote(id: number) {
@@ -128,6 +152,11 @@ function onPublished(feed: FeedItem) {
   store.prependFeed(feed)
 }
 
+function onDynamicPublished(type: 'feed' | 'note' | 'route' | 'companion') {
+  // 发布成功后刷新动态流
+  loadDynamicFeed()
+}
+
 async function loadMeProfile() {
   if (!auth.token || auth.userId == null) return
   try {
@@ -137,132 +166,153 @@ async function loadMeProfile() {
   }
 }
 
-let scrollObserver: IntersectionObserver | null = null
-let observedSentinelEl: HTMLElement | null = null
-let stopSentinelWatch: (() => void) | null = null
-
 onMounted(async () => {
   await loadDynamicFeed()
   loadNotes()
   loadRecommended()
+  loadHotRoutes()
   loadMeProfile()
-
-  stopSentinelWatch = watch(sentinelRef, (el) => {
-    if (!el) return
-    scrollObserver = new IntersectionObserver(
-      (entries) => {
-        if (!entries[0]?.isIntersecting) return
-        if (noMore.value || loadingMore.value || store.dynamicLoading) return
-        loadMore()
-      },
-      { rootMargin: '200px', threshold: 0 }
-    )
-    scrollObserver.observe(el)
-    observedSentinelEl = el
-    stopSentinelWatch?.()
-  }, { flush: 'post' })
-  onUnmounted(() => {
-    stopSentinelWatch?.()
-    if (scrollObserver && observedSentinelEl) {
-      scrollObserver.unobserve(observedSentinelEl)
-      scrollObserver.disconnect()
-    }
-  })
 })
+
+function handleSearch() {
+  store.setSearchKeyword(searchInput.value.trim())
+  currentPage.value = 1
+}
 
 watch(activeTab, () => {
-  displayCount.value = pageSize
+  currentPage.value = 1
 })
 watch(sortOrder, () => {
-  displayCount.value = pageSize
+  currentPage.value = 1
 })
+watch(() => store.searchKeyword, () => {
+  currentPage.value = 1
+})
+
+// 从路由 query 参数初始化搜索关键词
+watch(
+  () => route.query.q,
+  (q) => {
+    if (typeof q === 'string' && q.trim()) {
+      store.setSearchKeyword(q.trim())
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
   <div class="community-page">
     <div class="community-layout">
       <main class="main-content">
-        <!-- 顶部筛选与排序 -->
-        <section class="filter-section">
-          <el-tabs v-model="activeTab" class="category-tabs">
-            <el-tab-pane
-              v-for="tab in CATEGORY_TABS"
-              :key="tab.value"
-              :label="tab.label"
-              :name="tab.value"
-            />
-          </el-tabs>
-          <div class="sort-row">
-            <el-radio-group v-model="sortOrder" size="default">
-              <el-radio-button value="latest">最新</el-radio-button>
-              <el-radio-button value="hot">最热</el-radio-button>
-            </el-radio-group>
-          </div>
-        </section>
-
-        <!-- 动态流：骨架屏 / 空状态 / 列表 -->
-        <section class="feed-section">
-          <div v-if="store.dynamicLoading" class="skeleton-list">
-            <el-card v-for="i in 4" :key="i" class="skeleton-card" shadow="never">
-              <el-skeleton :rows="6" animated />
-            </el-card>
-          </div>
-
-          <div v-else-if="isFollowingEmpty" class="empty-wrap">
-            <el-empty description="暂无关注动态">
-              <template #image>
-                <div class="empty-illus">👋</div>
-              </template>
-              <template #description>
-                <p class="empty-desc">登录后查看关注的人的动态，或去发现更多旅友</p>
-              </template>
-              <el-button v-if="auth.token" type="primary" @click="router.push({ name: 'companion-list' })">
-                发现结伴
-              </el-button>
-              <el-button v-else type="primary" @click="router.push({ name: 'login' })">
-                去登录
-              </el-button>
-            </el-empty>
-          </div>
-
-          <div v-else-if="isEmpty" class="empty-wrap">
-            <el-empty description="当前分类暂无内容">
-              <template #image>
-                <div class="empty-illus">📷</div>
-              </template>
-              <template #description>
-                <p class="empty-desc">来发布第一条动态，或换个分类看看吧</p>
-              </template>
-              <el-button v-if="auth.token" type="primary" @click="publishVisible = true">
+        <form class="community-main-form" @submit.prevent="handleSearch">
+          <!-- 顶部筛选与排序 -->
+          <section class="filter-section">
+            <!-- 第一行：全部 关注 游记 路线 打卡 结伴 发布动态 -->
+            <div class="tabs-with-publish">
+              <el-tabs v-model="activeTab" class="category-tabs">
+                <el-tab-pane
+                  v-for="tab in CATEGORY_TABS"
+                  :key="tab.value"
+                  :label="tab.label"
+                  :name="tab.value"
+                />
+              </el-tabs>
+              <el-button
+                type="primary"
+                class="publish-btn publish-btn-in-tabs"
+                @click="auth.token ? (publishDynamicVisible = true) : router.push({ name: 'login', query: { redirect: '/community' } })"
+              >
+                <span class="publish-icon">+</span>
                 发布动态
               </el-button>
-              <el-button v-else type="primary" @click="router.push({ name: 'login' })">
-                登录后发布
-              </el-button>
-            </el-empty>
-          </div>
-
-          <div v-else class="feed-list">
-            <DynamicCard
-              v-for="d in displayedItems"
-              :key="`${d.type}-${d.id}`"
-              :item="d"
-            />
-            <div ref="sentinelRef" class="load-trigger" />
-            <div class="load-more-row">
-              <el-button
-                v-if="!noMore && store.filteredDynamicItems.length > 0"
-                :loading="loadingMore"
-                text
-                type="primary"
-                @click="loadMore"
-              >
-                加载更多
-              </el-button>
-              <p v-else-if="store.filteredDynamicItems.length > 0" class="no-more">已经到底部</p>
             </div>
-          </div>
-        </section>
+            
+            <!-- 第二行：搜索框 最新最热 -->
+            <div class="search-sort-row">
+              <el-input
+                v-model="searchInput"
+                placeholder="搜索关键词、目的地、话题..."
+                clearable
+                class="search-input"
+                @keyup.enter="handleSearch"
+                @clear="handleSearch"
+              >
+                <template #prefix>
+                  <el-icon class="search-input-icon"><Search /></el-icon>
+                </template>
+                <template #append>
+                  <el-button type="primary" @click="handleSearch">搜索</el-button>
+                </template>
+              </el-input>
+              <el-radio-group v-model="sortOrder" size="default" class="sort-radio">
+                <el-radio-button :value="'latest'">最新</el-radio-button>
+                <el-radio-button :value="'hot'">最热</el-radio-button>
+              </el-radio-group>
+            </div>
+          </section>
+
+          <!-- 动态流：骨架屏 / 空状态 / 列表 -->
+          <section class="feed-section">
+            <div v-if="store.dynamicLoading" class="skeleton-list">
+              <el-card v-for="i in 4" :key="i" class="skeleton-card" shadow="never">
+                <el-skeleton :rows="6" animated />
+              </el-card>
+            </div>
+
+            <div v-else-if="isFollowingEmpty" class="empty-wrap">
+              <el-empty description="暂无关注动态">
+                <template #image>
+                  <div class="empty-illus">👋</div>
+                </template>
+                <template #description>
+                  <p class="empty-desc">登录后查看关注的人的动态，或去发现更多旅友</p>
+                </template>
+                <el-button v-if="auth.token" type="primary" @click="router.push({ name: 'companion-list' })">
+                  发现结伴
+                </el-button>
+                <el-button v-else type="primary" @click="router.push({ name: 'login' })">
+                  去登录
+                </el-button>
+              </el-empty>
+            </div>
+
+            <div v-else-if="isEmpty" class="empty-wrap">
+              <el-empty description="当前分类暂无内容">
+                <template #image>
+                  <div class="empty-illus">📷</div>
+                </template>
+                <template #description>
+                  <p class="empty-desc">来发布第一条动态，或换个分类看看吧</p>
+                </template>
+                <el-button v-if="auth.token" type="primary" @click="publishVisible = true">
+                  发布动态
+                </el-button>
+                <el-button v-else type="primary" @click="router.push({ name: 'login' })">
+                  登录后发布
+                </el-button>
+              </el-empty>
+            </div>
+
+            <div v-else class="feed-list">
+              <DynamicCard
+                v-for="d in displayedItems"
+                :key="`${d.type}-${d.id}`"
+                :item="d"
+              />
+              <el-pagination
+                v-if="totalItems > 0"
+                class="pagination"
+                background
+                layout="prev, pager, next"
+                :page-size="pageSize"
+                :current-page="currentPage"
+                :total="totalItems"
+                @current-change="handlePageChange"
+              />
+            </div>
+          </section>
+        </form>
       </main>
 
       <!-- 右侧辅助区（PC） -->
@@ -310,34 +360,80 @@ watch(sortOrder, () => {
           </div>
         </el-card>
 
-        <!-- 热门游记 -->
-        <el-card class="sidebar-card" shadow="never">
+        <!-- 热门游记（参考游记详情页侧栏样式） -->
+        <el-card class="sidebar-card sidebar-notes-card" shadow="never">
           <template #header>
             <span class="sidebar-title">热门游记</span>
           </template>
+          <p class="sidebar-subtitle">按点赞排序的优质游记</p>
           <div v-if="store.noteLoading" class="sidebar-loading">加载中...</div>
-          <div v-else class="rec-list">
-            <div
+          <ul v-else class="sidebar-notes-list">
+            <li
               v-for="n in hotNotes"
               :key="n.id"
-              class="rec-item"
+              class="sidebar-note-item"
               @click="goNote(n.id)"
             >
-              <span class="rec-item-title">{{ n.title }}</span>
-              <span class="rec-item-meta">{{ n.likeCount ?? 0 }} 赞</span>
-            </div>
-          </div>
+              <div class="sidebar-note-cover">
+                <img
+                  :src="n.coverImage || 'https://picsum.photos/seed/note' + n.id + '/160/100'"
+                  alt=""
+                  @error="(e: Event) => (e.currentTarget as HTMLImageElement).style.display = 'none'"
+                />
+              </div>
+              <div class="sidebar-note-body">
+                <div class="sidebar-note-title">{{ n.title }}</div>
+                <div class="sidebar-note-meta">
+                  {{ n.destination || '目的地未填写' }}
+                </div>
+                <div class="sidebar-note-extra">
+                  <span class="sidebar-note-likes">{{ n.likeCount ?? 0 }} 赞</span>
+                </div>
+              </div>
+            </li>
+          </ul>
+          <el-button
+            v-if="!store.noteLoading && hotNotes.length > 0"
+            type="primary"
+            text
+            class="sidebar-more-btn"
+            @click="router.push({ name: 'notes' })"
+          >
+            查看更多游记
+          </el-button>
         </el-card>
 
-        <!-- 热门路线 -->
-        <el-card class="sidebar-card" shadow="never">
+        <!-- 热门路线（参考游记详情页关联路线样式） -->
+        <el-card class="sidebar-card sidebar-routes-card" shadow="never">
           <template #header>
             <span class="sidebar-title">热门路线</span>
           </template>
-          <p class="sidebar-text text-subtle">登录后在「我的路线」查看或创建路线</p>
-          <el-button type="primary" text @click="router.push({ name: 'routes' })">
-            去规划
-          </el-button>
+          <p class="sidebar-subtitle">旅友常参考的路线规划</p>
+          <div v-if="routeLoading" class="sidebar-loading">加载中...</div>
+          <template v-else-if="hotRoutes.length > 0">
+            <ul class="sidebar-routes-list">
+              <li
+                v-for="r in hotRoutes"
+                :key="r.id"
+                class="sidebar-route-item"
+                @click="goRoute(r.id)"
+              >
+                <div class="sidebar-route-brief">
+                  <div class="sidebar-route-name">{{ r.title || r.destination }}</div>
+                  <div class="sidebar-route-meta">{{ r.destination }} · {{ formatRouteDateRange(r) }}</div>
+                </div>
+              </li>
+            </ul>
+            <el-button type="primary" round size="small" class="sidebar-route-btn" @click="router.push({ name: 'routes' })">
+              更多路线
+            </el-button>
+          </template>
+          <template v-else>
+            <p class="sidebar-text text-subtle">暂无热门路线，去规划一条吧</p>
+            <el-button type="primary" round size="small" @click="router.push({ name: 'routes' })">
+              去规划
+            </el-button>
+          </template>
         </el-card>
       </aside>
     </div>
@@ -357,6 +453,12 @@ watch(sortOrder, () => {
       :visible="publishVisible"
       @update:visible="publishVisible = $event"
       @published="onPublished"
+    />
+
+    <PublishDynamicDialog
+      :visible="publishDynamicVisible"
+      @update:visible="publishDynamicVisible = $event"
+      @published="onDynamicPublished"
     />
   </div>
 </template>
@@ -396,8 +498,143 @@ watch(sortOrder, () => {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
 }
 
+/* 第一行：标签 + 发布动态 同一行 */
+.tabs-with-publish {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.tabs-with-publish .category-tabs {
+  flex: 1;
+  min-width: 0;
+}
+
+.tabs-with-publish .category-tabs :deep(.el-tabs__header) {
+  margin-bottom: 0;
+}
+
+.tabs-with-publish .category-tabs :deep(.el-tabs__content) {
+  display: none;
+}
+
+.tabs-with-publish .publish-btn-in-tabs {
+  flex-shrink: 0;
+  margin-left: 0;
+}
+
+@media (max-width: 768px) {
+  .tabs-with-publish {
+    flex-wrap: wrap;
+  }
+  .tabs-with-publish .publish-btn-in-tabs {
+    width: 100%;
+  }
+}
+
 .category-tabs :deep(.el-tabs__header) {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+}
+
+.category-tabs :deep(.el-tabs__nav-wrap) {
+  align-items: center;
+}
+
+.category-tabs :deep(.el-tabs__nav-next),
+.category-tabs :deep(.el-tabs__nav-prev) {
+  display: none;
+}
+
+/* 第二行：搜索框 + 最新最热 */
+.search-sort-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.search-sort-row .search-input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.search-sort-row .sort-radio {
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .search-sort-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .search-sort-row .search-input {
+    width: 100%;
+  }
+  
+  .search-sort-row .sort-radio {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.search-input-icon {
+  font-size: 18px;
+  color: #0d9488;
+  margin-right: 4px;
+}
+
+.search-input :deep(.el-input__wrapper) {
+  padding-left: 12px;
+}
+
+.search-input :deep(.el-input-group__append) {
+  padding: 0;
+  background: #0d9488;
+  border-color: #0d9488;
+}
+
+.search-input :deep(.el-input-group__append .el-button) {
+  margin: 0;
+  background: transparent;
+  border: none;
+  color: #fff;
+}
+
+.publish-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-weight: 500;
+  background: linear-gradient(135deg, #0d9488, #0f766e);
+  border: none;
+  box-shadow: 0 2px 8px rgba(13, 148, 136, 0.3);
+  transition: all 0.2s ease;
+}
+
+.publish-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(13, 148, 136, 0.4);
+}
+
+.publish-icon {
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 18px;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.publish-btn-in-tabs {
+  margin-left: 8px;
+  vertical-align: middle;
 }
 
 .category-tabs :deep(.el-tabs__item) {
@@ -429,16 +666,15 @@ watch(sortOrder, () => {
   color: #0d9488;
 }
 
-.sort-row {
-  display: flex;
-  justify-content: flex-end;
+.community-main-form {
+  margin: 0;
 }
 
-.sort-row :deep(.el-radio-button__inner) {
+.sort-radio :deep(.el-radio-button__inner) {
   border-radius: 8px;
 }
 
-.sort-row :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+.sort-radio :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
   background: #0d9488;
   border-color: #0d9488;
 }
@@ -487,6 +723,10 @@ watch(sortOrder, () => {
   gap: 20px;
 }
 
+.pagination {
+  align-self: center;
+}
+
 .load-trigger {
   height: 1px;
   visibility: hidden;
@@ -504,8 +744,8 @@ watch(sortOrder, () => {
 }
 
 .sidebar {
-  position: sticky;
-  top: 88px;
+  /* 取消粘性定位，随页面整体滚动 */
+  align-self: flex-start;
 }
 
 .sidebar-card {
@@ -526,6 +766,154 @@ watch(sortOrder, () => {
 
 .sidebar-title {
   font-size: 16px;
+}
+
+.sidebar-subtitle {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+/* 热门游记：参考游记详情页推荐游记卡片 */
+.sidebar-notes-card :deep(.el-card__body) {
+  padding-top: 0;
+}
+
+.sidebar-notes-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar-note-item {
+  display: flex;
+  gap: 10px;
+  cursor: pointer;
+  padding: 8px;
+  margin: 0 -8px;
+  border-radius: 12px;
+  transition: all 0.2s ease;
+}
+
+.sidebar-note-item:hover {
+  background: #f8fafc;
+  transform: translateX(4px);
+}
+
+.sidebar-note-cover {
+  flex: 0 0 72px;
+  height: 54px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #f1f5f9;
+  transition: transform 0.2s ease;
+}
+
+.sidebar-note-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sidebar-note-item:hover .sidebar-note-cover {
+  transform: scale(1.05);
+}
+
+.sidebar-note-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-note-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #111827;
+  transition: color 0.2s ease;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.sidebar-note-item:hover .sidebar-note-title {
+  color: #0f766e;
+}
+
+.sidebar-note-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.sidebar-note-extra {
+  margin-top: 4px;
+}
+
+.sidebar-note-likes {
+  font-size: 12px;
+  color: #0d9488;
+  font-weight: 500;
+}
+
+.sidebar-more-btn {
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 0;
+}
+
+/* 热门路线：参考游记详情页关联路线 */
+.sidebar-routes-card :deep(.el-card__body) {
+  padding-top: 0;
+}
+
+.sidebar-routes-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar-route-item {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f8fafc;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.sidebar-route-item:hover {
+  background: #ecfeff;
+  border-color: rgba(15, 118, 110, 0.15);
+  transform: translateX(4px);
+}
+
+.sidebar-route-brief {
+  margin: 0;
+}
+
+.sidebar-route-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #111827;
+  margin-bottom: 4px;
+}
+
+.sidebar-route-meta {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.sidebar-route-btn {
+  width: 100%;
+  margin-top: 4px;
 }
 
 .user-card-inner {

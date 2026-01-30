@@ -54,7 +54,7 @@ public class InteractionMessage {
     @Column(length = 512)
     private String contentPreview;
 
-    @Column(nullable = false)
+    @Column(name = "is_read", nullable = false)
     private Boolean read = false;
 
     private LocalDateTime createdAt;

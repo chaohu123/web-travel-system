@@ -34,5 +34,14 @@ public class RoutePlanController {
     public ApiResponse<TripPlanDtos.PlanResponse> getOne(@PathVariable Long id) {
         return ApiResponse.success(routePlanService.getPlan(id));
     }
+
+    /**
+     * 热门路线（未登录可访问）
+     * GET /api/routes/hot?limit=4
+     */
+    @GetMapping("/hot")
+    public ApiResponse<List<TripPlanDtos.PlanResponse>> hot(@RequestParam(defaultValue = "4") int limit) {
+        return ApiResponse.success(routePlanService.listHotPlans(limit));
+    }
 }
 

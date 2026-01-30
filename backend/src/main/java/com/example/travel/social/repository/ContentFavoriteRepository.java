@@ -15,5 +15,7 @@ public interface ContentFavoriteRepository extends JpaRepository<ContentFavorite
     boolean existsByUserAndTargetTypeAndTargetId(User user, String targetType, Long targetId);
 
     void deleteByUserAndTargetTypeAndTargetId(User user, String targetType, Long targetId);
+
+    List<ContentFavorite> findByUserOrderByCreatedAtDesc(User user);
 }
 

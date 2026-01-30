@@ -19,5 +19,8 @@ public interface CompanionPostRepository extends JpaRepository<CompanionPost, Lo
     List<CompanionPost> findTop20ByVisibilityOrderByCreatedAtDesc(String visibility);
 
     List<CompanionPost> findByCreatorAndVisibilityOrderByCreatedAtDesc(User creator, String visibility);
+
+    /** 统计引用该路线的结伴帖数量（用于路线「被使用」次数） */
+    long countByRelatedPlanId(Long relatedPlanId);
 }
 

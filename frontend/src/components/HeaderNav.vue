@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore, reputationLevelLabel } from '../store'
 import { useMessageStore } from '../store/message'
@@ -14,21 +14,18 @@ const isLoggedIn = computed(() => !!auth.token)
 const displayName = computed(() => auth.nickname || '旅人')
 const initial = computed(() => displayName.value.charAt(0).toUpperCase())
 const creditLevel = computed(() => reputationLevelLabel(auth.reputationLevel))
-const showSearch = computed(() => route.path === '/community')
 const totalUnread = computed(() => messageStore.totalUnread)
 
-const searchInput = ref('')
-watch(
-  () => route.path === '/community' && route.query.q,
-  (q) => {
-    searchInput.value = (typeof q === 'string' ? q : '') || ''
-  },
-  { immediate: true }
-)
+let refreshTimer: number | null = null
 
-function onSearch(val?: string) {
-  const kw = (val ?? searchInput.value).trim()
-  router.push({ path: '/community', query: kw ? { q: kw } : {} })
+async function refreshUnread() {
+  if (auth.token) {
+    try {
+      await messageStore.fetchOverview()
+    } catch {
+      // 静默失败
+    }
+  }
 }
 
 function logout() {
@@ -48,11 +45,42 @@ function goMessageCenter() {
   }
 }
 
+// 监听登录状态变化，登录后立即刷新未读数
+watch(
+  () => auth.token,
+  (newToken) => {
+    if (newToken) {
+      refreshUnread()
+    } else {
+      messageStore.setTotalUnread(0)
+    }
+  },
+  { immediate: true }
+)
+
+// 监听路由变化，从消息相关页面返回时刷新未读数
+watch(
+  () => route.path,
+  (newPath, oldPath) => {
+    // 从消息中心或聊天页离开时刷新未读数
+    if (oldPath && (oldPath.startsWith('/messages') || oldPath.startsWith('/chat')) && auth.token) {
+      refreshUnread()
+    }
+  }
+)
+
 onMounted(() => {
-  if (auth.token) {
-    messageStore.fetchOverview().catch(() => {
-      // 静默失败，不影响主流程
-    })
+  refreshUnread()
+  // 每30秒自动刷新未读数
+  refreshTimer = window.setInterval(() => {
+    refreshUnread()
+  }, 30000)
+})
+
+onBeforeUnmount(() => {
+  if (refreshTimer != null) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
   }
 })
 </script>
@@ -71,26 +99,12 @@ onMounted(() => {
         <router-link to="/community" class="nav-link" active-class="active">社区</router-link>
       </nav>
 
-      <div v-if="showSearch" class="nav-search">
-        <el-input
-          v-model="searchInput"
-          placeholder="搜索关键词、目的地、话题..."
-          clearable
-          class="search-input"
-          @keyup.enter="onSearch()"
-        >
-          <template #append>
-            <el-button type="primary" @click="onSearch()">搜索</el-button>
-          </template>
-        </el-input>
-      </div>
-
       <div class="nav-right">
         <el-tooltip content="消息" placement="bottom">
           <button class="icon-button" type="button" @click="goMessageCenter">
             <el-badge
-              :value="totalUnread > 99 ? '99+' : totalUnread || 0"
-              :hidden="!isLoggedIn || !totalUnread"
+              :value="totalUnread > 99 ? '99+' : totalUnread"
+              :hidden="!isLoggedIn || totalUnread === 0"
               class="msg-badge"
             >
               <el-icon class="msg-icon">
@@ -180,29 +194,6 @@ onMounted(() => {
 .nav-link:hover,
 .nav-link.active {
   color: #0d9488;
-}
-
-.nav-search {
-  flex: 1;
-  max-width: 360px;
-  margin: 0 16px;
-}
-
-.search-input {
-  width: 100%;
-}
-
-.nav-search :deep(.el-input-group__append) {
-  padding: 0;
-  background: #0d9488;
-  border-color: #0d9488;
-}
-
-.nav-search :deep(.el-input-group__append .el-button) {
-  margin: 0;
-  background: transparent;
-  border: none;
-  color: #fff;
 }
 
 .nav-right {

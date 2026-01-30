@@ -2,6 +2,8 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElCard, ElImage, ElMessage, ElDropdown, ElDropdownMenu, ElDropdownItem } from 'element-plus'
+import HeartIcon from './HeartIcon.vue'
+import { ChatDotRound, Star, StarFilled } from '@element-plus/icons-vue'
 import type { FeedItem } from '../api'
 import { commentsApi, interactionsApi } from '../api'
 import { useAuthStore } from '../store'
@@ -213,11 +215,11 @@ watch(() => props.item.id, () => {
         :class="{ active: liked, liked: liked }"
         @click="toggleLike"
       >
-        <span class="icon">{{ liked ? '❤️' : '🤍' }}</span>
+        <HeartIcon class="icon" :filled="liked" />
         <span class="count">{{ likeCount > 0 ? likeCount : '点赞' }}</span>
       </button>
       <button type="button" class="action-btn">
-        <span class="icon">💬</span>
+        <el-icon class="icon"><ChatDotRound /></el-icon>
         <span class="count">{{ commentCount > 0 ? commentCount : '评论' }}</span>
       </button>
       <button
@@ -226,7 +228,7 @@ watch(() => props.item.id, () => {
         :class="{ active: favorited }"
         @click="toggleFavorite"
       >
-        <span class="icon">{{ favorited ? '⭐' : '☆' }}</span>
+        <el-icon class="icon"><component :is="favorited ? StarFilled : Star" /></el-icon>
         <span class="count">{{ favorited ? '已收藏' : '收藏' }}</span>
       </button>
     </div>

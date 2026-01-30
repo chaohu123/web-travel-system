@@ -74,5 +74,13 @@ public class UserDtos {
         private String intro;
         private String slogan;
     }
+
+    /** 我关注的人（用于邀请成员等列表） */
+    @Data
+    public static class FollowingItem {
+        private Long userId;
+        private String nickname;
+        private String avatar;
+    }
 }
 

@@ -3,8 +3,12 @@ package com.example.travel.social.service;
 import com.example.travel.common.exception.BusinessException;
 import com.example.travel.social.dto.CommentDtos;
 import com.example.travel.social.entity.Comment;
+import com.example.travel.social.entity.InteractionMessage;
+import com.example.travel.social.entity.TravelNote;
 import com.example.travel.social.repository.CommentRepository;
+import com.example.travel.social.repository.ContentLikeRepository;
 import com.example.travel.social.repository.TravelNoteRepository;
+import com.example.travel.social.repository.InteractionMessageRepository;
 import com.example.travel.companion.entity.CompanionTeam;
 import com.example.travel.companion.entity.TeamMember;
 import com.example.travel.companion.repository.CompanionTeamRepository;
@@ -15,7 +19,7 @@ import com.example.travel.user.entity.UserReputation;
 import com.example.travel.user.repository.UserProfileRepository;
 import com.example.travel.user.repository.UserReputationRepository;
 import com.example.travel.user.repository.UserRepository;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -28,7 +32,9 @@ import java.util.stream.Collectors;
 public class CommentService {
 
     private final CommentRepository commentRepository;
+    private final ContentLikeRepository contentLikeRepository;
     private final TravelNoteRepository travelNoteRepository;
+    private final InteractionMessageRepository interactionMessageRepository;
     private final UserRepository userRepository;
     private final UserProfileRepository userProfileRepository;
     private final UserReputationRepository userReputationRepository;
@@ -36,14 +42,18 @@ public class CommentService {
     private final TeamMemberRepository teamMemberRepository;
 
     public CommentService(CommentRepository commentRepository,
+                          ContentLikeRepository contentLikeRepository,
                           TravelNoteRepository travelNoteRepository,
+                          InteractionMessageRepository interactionMessageRepository,
                           UserRepository userRepository,
                           UserProfileRepository userProfileRepository,
                           UserReputationRepository userReputationRepository,
                           CompanionTeamRepository companionTeamRepository,
                           TeamMemberRepository teamMemberRepository) {
         this.commentRepository = commentRepository;
+        this.contentLikeRepository = contentLikeRepository;
         this.travelNoteRepository = travelNoteRepository;
+        this.interactionMessageRepository = interactionMessageRepository;
         this.userRepository = userRepository;
         this.userProfileRepository = userProfileRepository;
         this.userReputationRepository = userReputationRepository;
@@ -58,6 +68,19 @@ public class CommentService {
                 ? userRepository.findByEmail(username)
                 : userRepository.findByPhone(username))
                 .orElseThrow(() -> BusinessException.unauthorized("用户未登录"));
+    }
+
+    /** 获取当前登录用户，未登录返回 null */
+    private User getCurrentUserOrNull() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
+            return null;
+        }
+        String username = auth.getName();
+        return (username.contains("@")
+                ? userRepository.findByEmail(username)
+                : userRepository.findByPhone(username))
+                .orElse(null);
     }
 
     @Transactional
@@ -83,6 +106,9 @@ public class CommentService {
         }
         commentRepository.save(comment);
 
+        // 给游记作者发送一条评论互动消息（目前仅对 note 生效）
+        createCommentMessageIfNeeded(user, req.getTargetType(), req.getTargetId(), req.getContent());
+
         // 如果是针对小队的评分，则给队长增加信誉积分
         if ("companion_team".equals(req.getTargetType()) && req.getScore() != null) {
             CompanionTeam team = companionTeamRepository.findById(req.getTargetId())
@@ -99,12 +125,45 @@ public class CommentService {
         }
     }
 
-    public List<CommentDtos.CommentItem> list(String targetType, Long targetId) {
-        List<Comment> list = commentRepository.findByTargetTypeAndTargetIdOrderByCreatedAtAsc(targetType, targetId);
-        return list.stream().map(this::toItem).collect(Collectors.toList());
+    private void createCommentMessageIfNeeded(User fromUser, String targetType, Long targetId, String content) {
+        if (!"note".equalsIgnoreCase(targetType)) {
+            return; // 目前仅对游记评论生成互动消息
+        }
+        TravelNote note = travelNoteRepository.findById(targetId).orElse(null);
+        if (note == null || note.getAuthor() == null || note.getAuthor().getId().equals(fromUser.getId())) {
+            return;
+        }
+        InteractionMessage msg = new InteractionMessage();
+        msg.setRecipient(note.getAuthor());
+        msg.setFromUser(fromUser);
+        msg.setType("COMMENT");
+        msg.setTargetType("note");
+        msg.setTargetId(targetId);
+        msg.setTargetTitle(note.getTitle());
+        String preview = content != null && content.length() > 50 ? content.substring(0, 50) + "…" : content;
+        msg.setContentPreview(preview);
+        interactionMessageRepository.save(msg);
     }
 
-    private CommentDtos.CommentItem toItem(Comment comment) {
+    @Transactional(readOnly = true)
+    public List<CommentDtos.CommentItem> list(String targetType, Long targetId) {
+        List<Comment> list = commentRepository.findByTargetTypeAndTargetIdOrderByCreatedAtAsc(targetType, targetId);
+        User currentUser = getCurrentUserOrNull();
+        return list.stream().map(c -> toItem(c, currentUser)).collect(Collectors.toList());
+    }
+
+    @Transactional
+    public void delete(Long id) {
+        User current = getCurrentUser();
+        Comment comment = commentRepository.findById(id)
+                .orElseThrow(() -> BusinessException.badRequest("评论不存在"));
+        if (comment.getUser() == null || !comment.getUser().getId().equals(current.getId())) {
+            throw BusinessException.forbidden("只能删除自己的评论");
+        }
+        commentRepository.delete(comment);
+    }
+
+    private CommentDtos.CommentItem toItem(Comment comment, User currentUser) {
         CommentDtos.CommentItem item = new CommentDtos.CommentItem();
         item.setId(comment.getId());
         if (comment.getUser() != null) {
@@ -130,6 +189,11 @@ public class CommentService {
             String[] arr = comment.getTags().split(",");
             item.setTags(java.util.Arrays.asList(arr));
         }
+        // 评论点赞数（targetType=comment, targetId=comment.id）
+        long likeCount = contentLikeRepository.countByTargetTypeAndTargetId("comment", comment.getId());
+        item.setLikeCount(likeCount);
+        item.setLikedByCurrentUser(currentUser != null
+                && contentLikeRepository.existsByUserAndTargetTypeAndTargetId(currentUser, "comment", comment.getId()));
         return item;
     }
 

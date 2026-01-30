@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElCard, ElInput, ElButton, ElDatePicker, ElSelect, ElOption, ElInputNumber, ElMessage } from 'element-plus'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import { api, routesApi } from '../api'
 
 interface MyPlanOption {
@@ -9,6 +11,9 @@ interface MyPlanOption {
   startDate: string
   endDate: string
 }
+
+const route = useRoute()
+const router = useRouter()
 
 const relatedPlanId = ref<number | null>(null)
 const destination = ref('')
@@ -23,8 +28,31 @@ const visibility = ref('public')
 const loading = ref(false)
 const errorMsg = ref('')
 const myPlans = ref<MyPlanOption[]>([])
-const route = useRoute()
-const router = useRouter()
+
+/** 格式化为 YYYY-MM-DD */
+function formatDate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** 根据起止日期计算路线天数（含首尾） */
+function getRouteDays(startStr: string, endStr: string): number {
+  const start = new Date(startStr)
+  const end = new Date(endStr)
+  const diff = Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000))
+  return Math.max(1, diff + 1)
+}
+
+/** 将起止日期设为：起始=当前日期，结束=当前日期+路线天数 */
+function applyCurrentDateRange(routeDays: number) {
+  const today = new Date()
+  startDate.value = formatDate(today)
+  const end = new Date(today)
+  end.setDate(end.getDate() + routeDays)
+  endDate.value = formatDate(end)
+}
 
 const fetchMyPlans = async () => {
   try {
@@ -35,9 +63,14 @@ const fetchMyPlans = async () => {
   }
 }
 
+const selectedPlan = computed(() =>
+  myPlans.value.find((p) => p.id === relatedPlanId.value)
+)
+
 const onSubmit = async () => {
   if (!destination.value || !startDate.value || !endDate.value) {
     errorMsg.value = '请填写目的地和时间范围'
+    ElMessage.warning('请填写目的地和时间范围')
     return
   }
   loading.value = true
@@ -55,139 +88,349 @@ const onSubmit = async () => {
       expectedMateDesc: expectedMateDesc.value || undefined,
       visibility: visibility.value,
     })
+    ElMessage.success('发布成功')
     router.push('/companion')
   } catch (e: any) {
     errorMsg.value = e.response?.data?.message || '发布失败'
+    ElMessage.error(errorMsg.value)
   } finally {
     loading.value = false
   }
 }
 
-onMounted(() => {
-  // 支持从「路线详情页」带参跳转，自动预填关联行程和基础字段
+const goBack = () => router.push('/companion')
+
+onMounted(async () => {
   const q = route.query
   const qPlanId = typeof q.planId === 'string' ? Number(q.planId) : null
   if (qPlanId) relatedPlanId.value = qPlanId
   if (typeof q.destination === 'string') destination.value = q.destination
-  if (typeof q.startDate === 'string') startDate.value = q.startDate
-  if (typeof q.endDate === 'string') endDate.value = q.endDate
 
-  fetchMyPlans()
+  await fetchMyPlans()
+
+  // 起始日期改为当前日期，结束日期改为 当前日期 + 路线天数
+  const qStart = typeof q.startDate === 'string' ? q.startDate : ''
+  const qEnd = typeof q.endDate === 'string' ? q.endDate : ''
+  if (qStart && qEnd) {
+    const routeDays = getRouteDays(qStart, qEnd)
+    applyCurrentDateRange(routeDays)
+  } else if (relatedPlanId.value && myPlans.value.length) {
+    const plan = myPlans.value.find((p) => p.id === relatedPlanId.value)
+    if (plan?.startDate && plan?.endDate) {
+      const routeDays = getRouteDays(plan.startDate, plan.endDate)
+      applyCurrentDateRange(routeDays)
+    }
+  }
+})
+
+// 切换关联行程时，将起止日期更新为 当前日期 + 该路线天数
+watch(relatedPlanId, (planId) => {
+  if (!planId) return
+  const plan = myPlans.value.find((p) => p.id === planId)
+  if (plan?.startDate && plan?.endDate) {
+    const routeDays = getRouteDays(plan.startDate, plan.endDate)
+    applyCurrentDateRange(routeDays)
+  }
 })
 </script>
 
 <template>
-  <div class="card publish-card">
-    <h2>发布结伴信息</h2>
-    <p class="text-subtle">关联你的行程，寻找志同道合的旅友一起出发。</p>
-    <form @submit.prevent="onSubmit" class="form-grid">
-      <div class="field">
-        <span class="form-label">关联行程（可选）</span>
-        <select v-model.number="relatedPlanId" class="form-select">
-          <option :value="null">不关联行程</option>
-          <option v-for="plan in myPlans" :key="plan.id" :value="plan.id">
-            {{ plan.destination }}（{{ plan.startDate }} ~ {{ plan.endDate }}）
-          </option>
-        </select>
-      </div>
-      <div class="field">
-        <span class="form-label">目的地</span>
-        <input v-model="destination" class="form-input" placeholder="城市、国家或路线名称" />
-      </div>
-      <div class="field">
-        <span class="form-label">出发日期</span>
-        <input v-model="startDate" class="form-input" type="date" />
-      </div>
-      <div class="field">
-        <span class="form-label">结束日期</span>
-        <input v-model="endDate" class="form-input" type="date" />
-      </div>
-      <div class="field">
-        <span class="form-label">最少人数</span>
-        <input v-model.number="minPeople" class="form-input" type="number" min="1" />
-      </div>
-      <div class="field">
-        <span class="form-label">最多人数</span>
-        <input v-model.number="maxPeople" class="form-input" type="number" min="1" />
-      </div>
-      <div class="field">
-        <span class="form-label">预算下限（元，可选）</span>
-        <input v-model.number="budgetMin" class="form-input" type="number" min="0" />
-      </div>
-      <div class="field">
-        <span class="form-label">预算上限（元，可选）</span>
-        <input v-model.number="budgetMax" class="form-input" type="number" min="0" />
-      </div>
-      <div class="field full">
-        <span class="form-label">对旅友的期待（可选）</span>
-        <textarea
-          v-model="expectedMateDesc"
-          class="form-input"
-          rows="3"
-          placeholder="比如：作息规律、喜欢拍照、会开车、性格安静/活泼等"
-        ></textarea>
-      </div>
-      <div class="field">
-        <span class="form-label">可见性</span>
-        <select v-model="visibility" class="form-select">
-          <option value="public">公开</option>
-          <option value="friends">仅好友（预留）</option>
-          <option value="private">私密</option>
-        </select>
-      </div>
-      <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
-      <div class="actions">
-        <button class="btn primary" type="submit" :disabled="loading">
-          {{ loading ? '发布中...' : '发布结伴信息' }}
-        </button>
-      </div>
-    </form>
+  <div class="companion-create-page">
+    <div class="back-wrap">
+      <el-button :icon="ArrowLeft" circle @click="goBack" />
+    </div>
+    <div class="create-container">
+      <el-card class="create-card" shadow="never">
+        <template #header>
+          <div class="card-header">
+            <h2 class="card-title">发布结伴信息</h2>
+            <p class="card-subtitle">关联你的行程，寻找志同道合的旅友一起出发。</p>
+          </div>
+        </template>
+
+        <form @submit.prevent="onSubmit" class="companion-form">
+          <div class="form-row">
+            <div class="form-item">
+              <label class="form-label">关联行程（可选）</label>
+              <el-select
+                v-model="relatedPlanId"
+                placeholder="选择关联的行程"
+                clearable
+                class="form-select"
+              >
+                <el-option :value="null" label="不关联行程" />
+                <el-option
+                  v-for="plan in myPlans"
+                  :key="plan.id"
+                  :value="plan.id"
+                  :label="`${plan.destination}（${plan.startDate} ~ ${plan.endDate}）`"
+                />
+              </el-select>
+            </div>
+            <div class="form-item">
+              <label class="form-label">目的地 <span class="required">*</span></label>
+              <el-input
+                v-model="destination"
+                placeholder="城市、国家或路线名称"
+                maxlength="50"
+                show-word-limit
+              />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-item">
+              <label class="form-label">出发日期 <span class="required">*</span></label>
+              <el-date-picker
+                v-model="startDate"
+                type="date"
+                placeholder="选择出发日期"
+                format="YYYY-MM-DD"
+                value-format="YYYY-MM-DD"
+                class="form-date"
+              />
+            </div>
+            <div class="form-item">
+              <label class="form-label">结束日期 <span class="required">*</span></label>
+              <el-date-picker
+                v-model="endDate"
+                type="date"
+                placeholder="选择结束日期"
+                format="YYYY-MM-DD"
+                value-format="YYYY-MM-DD"
+                class="form-date"
+              />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-item">
+              <label class="form-label">最少人数 <span class="required">*</span></label>
+              <el-input-number v-model="minPeople" :min="1" :max="20" class="form-number" />
+            </div>
+            <div class="form-item">
+              <label class="form-label">最多人数 <span class="required">*</span></label>
+              <el-input-number v-model="maxPeople" :min="1" :max="20" class="form-number" />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-item">
+              <label class="form-label">预算下限（元，可选）</label>
+              <el-input-number
+                v-model="budgetMin"
+                :min="0"
+                :precision="0"
+                placeholder="最低预算"
+                class="form-number"
+              />
+            </div>
+            <div class="form-item">
+              <label class="form-label">预算上限（元，可选）</label>
+              <el-input-number
+                v-model="budgetMax"
+                :min="0"
+                :precision="0"
+                placeholder="最高预算"
+                class="form-number"
+              />
+            </div>
+          </div>
+
+          <div class="form-item full">
+            <label class="form-label">对旅友的期待（可选）</label>
+            <el-input
+              v-model="expectedMateDesc"
+              type="textarea"
+              :rows="3"
+              placeholder="比如：作息规律、喜欢拍照、会开车、性格安静/活泼等"
+              maxlength="500"
+              show-word-limit
+            />
+          </div>
+
+          <div class="form-item">
+            <label class="form-label">可见性</label>
+            <el-select v-model="visibility" class="form-select">
+              <el-option value="public" label="公开" />
+              <el-option value="friends" label="仅好友（预留）" />
+              <el-option value="private" label="私密" />
+            </el-select>
+          </div>
+
+          <p v-if="errorMsg" class="form-error">{{ errorMsg }}</p>
+
+          <div class="form-actions">
+            <el-button @click="goBack">取消</el-button>
+            <el-button type="primary" :loading="loading" :disabled="!destination || !startDate || !endDate" native-type="submit">
+              {{ loading ? '发布中...' : '发布结伴信息' }}
+            </el-button>
+          </div>
+        </form>
+      </el-card>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.publish-card {
-  width: 900px;
-  max-width: 100%;
-  padding: 28px 24px 24px;
+.companion-create-page {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f0f9ff 0%, #f8fafc 20%);
+  padding: 24px 20px 48px;
 }
 
-h2 {
-  margin: 0 0 6px;
+.back-wrap {
+  position: fixed;
+  top: 80px;
+  left: 20px;
+  z-index: 200;
+}
+
+.back-wrap :deep(.el-button) {
+  width: 44px;
+  height: 44px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+  transition: all 0.2s ease;
+}
+
+.back-wrap :deep(.el-button:hover) {
+  background: #0d9488;
+  border-color: #0d9488;
+  color: #fff;
+  transform: translateX(-4px);
+  box-shadow: 0 6px 20px rgba(13, 148, 136, 0.3);
+}
+
+.create-container {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.create-card {
+  border-radius: 16px;
+  border: none;
+  box-shadow: 0 2px 16px rgba(15, 23, 42, 0.08);
+}
+
+.create-card :deep(.el-card__header) {
+  padding: 24px 28px 16px;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.create-card :deep(.el-card__body) {
+  padding: 28px;
+}
+
+.card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card-title {
+  margin: 0;
   font-size: 22px;
+  font-weight: 600;
+  color: #1e293b;
 }
 
-.form-grid {
-  margin-top: 20px;
+.card-subtitle {
+  margin: 0;
+  font-size: 14px;
+  color: #64748b;
+}
+
+.companion-form {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.form-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px 20px;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
 }
 
-.field.full {
+.form-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form-item.full {
   grid-column: 1 / -1;
 }
 
-textarea.form-input {
-  resize: vertical;
+.form-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #334155;
 }
 
-.error {
-  grid-column: 1 / -1;
+.required {
   color: #dc2626;
-  font-size: 13px;
 }
 
-.actions {
-  grid-column: 1 / -1;
+.form-select,
+.form-date,
+.form-number {
+  width: 100%;
+}
+
+.form-error {
+  margin: 0;
+  padding: 12px 16px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  font-size: 14px;
+  color: #dc2626;
+}
+
+.form-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f2f5;
+}
+
+.form-actions .el-button {
+  border-radius: 10px;
+  padding: 10px 24px;
+}
+
+.form-actions .el-button--primary {
+  background: linear-gradient(135deg, #0d9488, #0f766e);
+  border: none;
+  box-shadow: 0 2px 10px rgba(13, 148, 136, 0.3);
+}
+
+.form-actions .el-button--primary:hover {
+  box-shadow: 0 4px 14px rgba(13, 148, 136, 0.4);
 }
 
 @media (max-width: 768px) {
-  .form-grid {
+  .form-row {
     grid-template-columns: 1fr;
+  }
+
+  .back-wrap {
+    top: 70px;
+    left: 12px;
+  }
+
+  .back-wrap :deep(.el-button) {
+    width: 40px;
+    height: 40px;
+  }
+
+  .create-card :deep(.el-card__header),
+  .create-card :deep(.el-card__body) {
+    padding: 18px;
   }
 }
 </style>
-

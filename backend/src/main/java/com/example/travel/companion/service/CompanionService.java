@@ -5,9 +5,11 @@ import com.example.travel.companion.dto.CompanionDtos;
 import com.example.travel.companion.entity.CompanionPost;
 import com.example.travel.companion.entity.CompanionTeam;
 import com.example.travel.companion.entity.TeamMember;
+import com.example.travel.companion.entity.TeamShare;
 import com.example.travel.companion.repository.CompanionPostRepository;
 import com.example.travel.companion.repository.CompanionTeamRepository;
 import com.example.travel.companion.repository.TeamMemberRepository;
+import com.example.travel.companion.repository.TeamShareRepository;
 import com.example.travel.user.entity.User;
 import com.example.travel.user.entity.UserProfile;
 import com.example.travel.user.entity.UserPreference;
@@ -32,6 +34,7 @@ public class CompanionService {
     private final CompanionPostRepository companionPostRepository;
     private final CompanionTeamRepository companionTeamRepository;
     private final TeamMemberRepository teamMemberRepository;
+    private final TeamShareRepository teamShareRepository;
     private final UserRepository userRepository;
     private final UserProfileRepository userProfileRepository;
     private final UserPreferenceRepository userPreferenceRepository;
@@ -40,6 +43,7 @@ public class CompanionService {
     public CompanionService(CompanionPostRepository companionPostRepository,
                             CompanionTeamRepository companionTeamRepository,
                             TeamMemberRepository teamMemberRepository,
+                            TeamShareRepository teamShareRepository,
                             UserRepository userRepository,
                             UserProfileRepository userProfileRepository,
                             UserPreferenceRepository userPreferenceRepository,
@@ -47,6 +51,7 @@ public class CompanionService {
         this.companionPostRepository = companionPostRepository;
         this.companionTeamRepository = companionTeamRepository;
         this.teamMemberRepository = teamMemberRepository;
+        this.teamShareRepository = teamShareRepository;
         this.userRepository = userRepository;
         this.userProfileRepository = userProfileRepository;
         this.userPreferenceRepository = userPreferenceRepository;
@@ -104,18 +109,24 @@ public class CompanionService {
     public CompanionDtos.PostDetail getPostDetail(Long postId) {
         CompanionPost post = companionPostRepository.findById(postId)
                 .orElseThrow(() -> BusinessException.badRequest("结伴信息不存在"));
+        // 复用 summary 的“昵称/头像/信誉/标签”填充逻辑，避免详情页显示邮箱
+        CompanionDtos.PostSummary summary = toSummary(post);
         CompanionDtos.PostDetail detail = new CompanionDtos.PostDetail();
-        detail.setId(post.getId());
-        detail.setDestination(post.getDestination());
-        detail.setStartDate(post.getStartDate());
-        detail.setEndDate(post.getEndDate());
-        detail.setMinPeople(post.getMinPeople());
-        detail.setMaxPeople(post.getMaxPeople());
-        detail.setBudgetMin(post.getBudgetMin());
-        detail.setBudgetMax(post.getBudgetMax());
-        detail.setStatus(post.getStatus());
-        detail.setCreatorNickname(post.getCreator() != null ? post.getCreator().getEmail() : "");
-        detail.setRelatedPlanId(post.getRelatedPlanId());
+        detail.setId(summary.getId());
+        detail.setDestination(summary.getDestination());
+        detail.setStartDate(summary.getStartDate());
+        detail.setEndDate(summary.getEndDate());
+        detail.setMinPeople(summary.getMinPeople());
+        detail.setMaxPeople(summary.getMaxPeople());
+        detail.setBudgetMin(summary.getBudgetMin());
+        detail.setBudgetMax(summary.getBudgetMax());
+        detail.setStatus(summary.getStatus());
+        detail.setCreatorId(summary.getCreatorId());
+        detail.setCreatorNickname(summary.getCreatorNickname());
+        detail.setCreatorAvatar(summary.getCreatorAvatar());
+        detail.setCreatorReputationLevel(summary.getCreatorReputationLevel());
+        detail.setCreatorTags(summary.getCreatorTags());
+        detail.setRelatedPlanId(summary.getRelatedPlanId());
         detail.setExpectedMateDesc(post.getExpectedMateDesc());
         companionTeamRepository.findFirstByPostOrderByIdAsc(post)
                 .ifPresent(team -> detail.setTeamId(team.getId()));
@@ -136,12 +147,29 @@ public class CompanionService {
             detail.setStartDate(post.getStartDate());
             detail.setEndDate(post.getEndDate());
             detail.setRelatedPlanId(post.getRelatedPlanId());
+            detail.setMaxPeople(post.getMaxPeople());
+            detail.setBudgetMin(post.getBudgetMin());
+            detail.setBudgetMax(post.getBudgetMax());
         }
         List<TeamMember> members = teamMemberRepository.findByTeam(team);
         List<CompanionDtos.TeamMemberItem> items = members.stream().map(m -> {
             CompanionDtos.TeamMemberItem item = new CompanionDtos.TeamMemberItem();
             item.setUserId(m.getUser().getId());
-            item.setUserName(m.getUser().getEmail());
+            UserProfile profile = userProfileRepository.findById(m.getUser().getId()).orElse(null);
+            Long uid = m.getUser().getId();
+            String displayName = "用户" + uid;
+            if (profile != null && profile.getNickname() != null && !profile.getNickname().isBlank()) {
+                displayName = profile.getNickname();
+            } else if (m.getUser().getPhone() != null && !m.getUser().getPhone().isBlank()) {
+                displayName = m.getUser().getPhone();
+            }
+            // 无昵称且无手机号时显示「用户{id}」，保证每个成员有唯一标识
+            item.setUserName(displayName);
+            item.setAvatar(profile != null ? profile.getAvatar() : null);
+            UserReputation reputation = userReputationRepository.findById(m.getUser().getId()).orElse(null);
+            if (reputation != null && reputation.getLevel() != null) {
+                item.setReputationLevel(reputation.getLevel());
+            }
             item.setRole(m.getRole());
             item.setState(m.getState());
             return item;
@@ -169,17 +197,11 @@ public class CompanionService {
                 if (profile.getNickname() != null && !profile.getNickname().isBlank()) {
                     dto.setCreatorNickname(profile.getNickname());
                 } else {
-                    String fallback = post.getCreator().getEmail() != null 
-                        ? post.getCreator().getEmail() 
-                        : (post.getCreator().getPhone() != null ? post.getCreator().getPhone() : "旅友");
-                    dto.setCreatorNickname(fallback);
+                    dto.setCreatorNickname("旅人" + post.getCreator().getId());
                 }
                 dto.setCreatorAvatar(profile.getAvatar());
             } else {
-                String fallback = post.getCreator().getEmail() != null 
-                    ? post.getCreator().getEmail() 
-                    : (post.getCreator().getPhone() != null ? post.getCreator().getPhone() : "旅友");
-                dto.setCreatorNickname(fallback);
+                dto.setCreatorNickname("旅人" + post.getCreator().getId());
                 dto.setCreatorAvatar(null);
             }
             // 获取用户信誉等级
@@ -228,6 +250,9 @@ public class CompanionService {
         User current = getCurrentUser();
         CompanionTeam team = companionTeamRepository.findById(teamId)
                 .orElseThrow(() -> BusinessException.badRequest("小队不存在"));
+        if ("disbanded".equals(team.getStatus())) {
+            throw BusinessException.badRequest("小队已解散");
+        }
 
         boolean exists = teamMemberRepository.findByTeamAndUser(team, current).isPresent();
         if (exists) {
@@ -240,6 +265,86 @@ public class CompanionService {
         member.setRole("member");
         member.setState("joined");
         teamMemberRepository.save(member);
+    }
+
+    /**
+     * 退出小队（仅普通成员；队长请使用解散或转让队长）
+     */
+    @Transactional
+    public void quitTeam(Long teamId) {
+        User current = getCurrentUser();
+        CompanionTeam team = companionTeamRepository.findById(teamId)
+                .orElseThrow(() -> BusinessException.badRequest("小队不存在"));
+        TeamMember membership = teamMemberRepository.findByTeamAndUser(team, current)
+                .orElseThrow(() -> BusinessException.badRequest("您不是该小队成员"));
+        if ("leader".equals(membership.getRole())) {
+            throw BusinessException.badRequest("队长请先解散小队或转让队长后再退出");
+        }
+        teamMemberRepository.delete(membership);
+    }
+
+    /**
+     * 解散小队（仅队长）
+     */
+    @Transactional
+    public void dissolveTeam(Long teamId) {
+        User current = getCurrentUser();
+        CompanionTeam team = companionTeamRepository.findById(teamId)
+                .orElseThrow(() -> BusinessException.badRequest("小队不存在"));
+        TeamMember leader = teamMemberRepository.findByTeamAndUser(team, current)
+                .orElseThrow(() -> BusinessException.forbidden("仅队长可解散小队"));
+        if (!"leader".equals(leader.getRole())) {
+            throw BusinessException.forbidden("仅队长可解散小队");
+        }
+        team.setStatus("disbanded");
+        companionTeamRepository.save(team);
+    }
+
+    /**
+     * 队长移除指定成员
+     */
+    @Transactional
+    public void removeMember(Long teamId, Long userId) {
+        User current = getCurrentUser();
+        CompanionTeam team = companionTeamRepository.findById(teamId)
+                .orElseThrow(() -> BusinessException.badRequest("小队不存在"));
+        TeamMember leader = teamMemberRepository.findByTeamAndUser(team, current)
+                .orElseThrow(() -> BusinessException.forbidden("仅队长可移除成员"));
+        if (!"leader".equals(leader.getRole())) {
+            throw BusinessException.forbidden("仅队长可移除成员");
+        }
+        User targetUser = userRepository.findById(userId)
+                .orElseThrow(() -> BusinessException.badRequest("目标用户不存在"));
+        TeamMember toRemove = teamMemberRepository.findByTeamAndUser(team, targetUser)
+                .orElseThrow(() -> BusinessException.badRequest("该用户不是小队成员"));
+        if ("leader".equals(toRemove.getRole())) {
+            throw BusinessException.badRequest("不能移除队长，请先转让队长或解散小队");
+        }
+        teamMemberRepository.delete(toRemove);
+    }
+
+    /**
+     * 队长将小队/行程分享给指定用户，被分享人可查看该行程
+     */
+    @Transactional
+    public void shareTeam(Long teamId, Long toUserId) {
+        User current = getCurrentUser();
+        CompanionTeam team = companionTeamRepository.findById(teamId)
+                .orElseThrow(() -> BusinessException.badRequest("小队不存在"));
+        TeamMember leader = teamMemberRepository.findByTeamAndUser(team, current)
+                .orElseThrow(() -> BusinessException.forbidden("仅队长可分享小队"));
+        if (!"leader".equals(leader.getRole())) {
+            throw BusinessException.forbidden("仅队长可分享小队");
+        }
+        User toUser = userRepository.findById(toUserId)
+                .orElseThrow(() -> BusinessException.badRequest("目标用户不存在"));
+        if (teamShareRepository.existsByTeamAndToUser(team, toUser)) {
+            return;
+        }
+        TeamShare share = new TeamShare();
+        share.setTeam(team);
+        share.setToUser(toUser);
+        teamShareRepository.save(share);
     }
 
     /**

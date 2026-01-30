@@ -5,6 +5,8 @@ import com.example.travel.social.dto.FeedDtos;
 import com.example.travel.social.entity.FeedPost;
 import com.example.travel.social.repository.FeedPostRepository;
 import com.example.travel.user.entity.User;
+import com.example.travel.user.entity.UserProfile;
+import com.example.travel.user.repository.UserProfileRepository;
 import com.example.travel.user.repository.UserRepository;
 import jakarta.transaction.Transactional;
 import org.springframework.security.core.Authentication;
@@ -19,11 +21,14 @@ public class FeedService {
 
     private final FeedPostRepository feedPostRepository;
     private final UserRepository userRepository;
+    private final UserProfileRepository userProfileRepository;
 
     public FeedService(FeedPostRepository feedPostRepository,
-                       UserRepository userRepository) {
+                       UserRepository userRepository,
+                       UserProfileRepository userProfileRepository) {
         this.feedPostRepository = feedPostRepository;
         this.userRepository = userRepository;
+        this.userProfileRepository = userProfileRepository;
     }
 
     private User getCurrentUser() {
@@ -58,9 +63,21 @@ public class FeedService {
         item.setId(post.getId());
         item.setContent(post.getContent());
         item.setImageUrlsJson(post.getImageUrlsJson());
-        item.setAuthorName(post.getUser() != null ? post.getUser().getEmail() : "");
+        item.setAuthorName(post.getUser() != null ? resolveAuthorName(post.getUser()) : "用户");
         item.setCreatedAt(post.getCreatedAt());
         return item;
+    }
+
+    /** 优先使用昵称，无昵称时回退到邮箱/手机号 */
+    private String resolveAuthorName(User user) {
+        UserProfile profile = userProfileRepository.findById(user.getId()).orElse(null);
+        if (profile != null && profile.getNickname() != null && !profile.getNickname().isBlank()) {
+            return profile.getNickname();
+        }
+        if (user.getEmail() != null && !user.getEmail().isBlank()) {
+            return user.getEmail();
+        }
+        return user.getPhone() != null ? user.getPhone() : "用户";
     }
 }
 

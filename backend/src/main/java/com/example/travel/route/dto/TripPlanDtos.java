@@ -68,6 +68,8 @@ public class TripPlanDtos {
         private Integer peopleCount;
         private String pace;
         private List<Day> days;
+        /** 该路线被游记/结伴引用次数，用于个人主页展示 */
+        private Long usedCount;
     }
 }
 

@@ -33,10 +33,22 @@ public class TravelNoteController {
         return ApiResponse.success(travelNoteService.getOne(id));
     }
 
+    /** 游记详情页「相关景点推荐」，由后端根据关联路线自动生成 */
+    @GetMapping("/{id}/related-spots")
+    public ApiResponse<List<TravelNoteDtos.RelatedSpotItem>> getRelatedSpots(@PathVariable Long id) {
+        return ApiResponse.success(travelNoteService.getRelatedSpots(id));
+    }
+
     @PutMapping("/{id}")
     public ApiResponse<Void> update(@PathVariable Long id,
                                     @Valid @RequestBody TravelNoteDtos.UpdateRequest request) {
         travelNoteService.update(id, request);
+        return ApiResponse.success();
+    }
+
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> delete(@PathVariable Long id) {
+        travelNoteService.delete(id);
         return ApiResponse.success();
     }
 }

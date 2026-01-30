@@ -56,6 +56,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/companion/posts/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/feeds").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/comments").permitAll()
+                        // 允许未登录用户查看点赞/收藏数（游记详情页等）
+                        .requestMatchers(HttpMethod.GET, "/api/interactions/summary").permitAll()
                         // 其它接口仍需认证
                         .anyRequest().authenticated()
                 )

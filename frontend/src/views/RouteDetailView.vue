@@ -7,6 +7,7 @@ import { routesApi, commentsApi, interactionsApi } from '../api'
 import { useAuthStore } from '../store'
 import type { CommentItem, PlanResponse, TripPlanDay, TripPlanActivity } from '../api'
 import { loadAmapScript, initAmapMap, addMarker, addPolyline, geocode } from '../utils/amap'
+import { formatDateTime } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -699,7 +700,7 @@ onBeforeUnmount(() => {
                 <div class="comment-top">
                   <span class="comment-name">{{ c.userName }}</span>
                   <el-rate v-if="c.score != null" :model-value="c.score" disabled allow-half size="small" />
-                  <span class="comment-time">{{ c.createdAt }}</span>
+                  <span class="comment-time">{{ formatDateTime(c.createdAt) }}</span>
                 </div>
                 <p class="comment-content">{{ c.content }}</p>
               </div>

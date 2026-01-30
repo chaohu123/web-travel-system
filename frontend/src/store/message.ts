@@ -26,6 +26,8 @@ export interface PrivateConversation {
   lastMessageTime: string
   unreadCount: number
   pinned?: boolean
+  /** 对方是否为当前用户的粉丝 */
+  peerIsFollower?: boolean
 }
 
 export type InteractionCategory = 'all' | 'like' | 'comment'
@@ -59,10 +61,16 @@ export const useMessageStore = defineStore('message', () => {
 
   async function fetchOverview() {
     const data = await messageApi.overview()
+    console.debug('[MessageStore] fetchOverview result', data)
     totalUnread.value = data.totalUnread
   }
 
   async function fetchInteractionMessages(category: InteractionCategory = 'all') {
+    console.debug('[MessageStore] fetchInteractionMessages start', {
+      page: interactionPage.value,
+      pageSize: interactionPageSize.value,
+      category,
+    })
     interactionLoading.value = true
     try {
       const res: PageResult<InteractionMessageDTO> = await messageApi.interactionList({
@@ -70,16 +78,25 @@ export const useMessageStore = defineStore('message', () => {
         pageSize: interactionPageSize.value,
         category,
       })
+      console.debug('[MessageStore] fetchInteractionMessages raw response', res)
       // 转换后端返回的数据格式：统一转换为大写（前端内部使用）
       const converted: InteractionMessage[] = res.list.map((item) => ({
         ...item,
         type: (typeof item.type === 'string' ? item.type.toUpperCase() : item.type) as 'LIKE' | 'COMMENT',
         targetType: (typeof item.targetType === 'string' ? item.targetType.toUpperCase() : item.targetType) as 'NOTE' | 'ROUTE',
       }))
+      console.debug('[MessageStore] fetchInteractionMessages converted', converted)
       interactionMessages.value =
         interactionPage.value === 1 ? converted : [...interactionMessages.value, ...converted]
       interactionTotal.value = res.total
       totalUnread.value = converted.filter((m) => !m.read).length + privateUnreadCount.value
+      console.debug('[MessageStore] fetchInteractionMessages done', {
+        interactionTotal: interactionTotal.value,
+        interactionUnread: interactionUnreadCount.value,
+        totalUnread: totalUnread.value,
+      })
+    } catch (e) {
+      console.error('[MessageStore] fetchInteractionMessages error', e)
     } finally {
       interactionLoading.value = false
     }

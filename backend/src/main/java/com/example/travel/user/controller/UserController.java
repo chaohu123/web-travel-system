@@ -3,6 +3,7 @@ package com.example.travel.user.controller;
 import com.example.travel.common.api.ApiResponse;
 import com.example.travel.user.dto.UserDtos;
 import com.example.travel.user.entity.User;
+import com.example.travel.user.entity.UserFollow;
 import com.example.travel.user.entity.UserProfile;
 import com.example.travel.user.entity.UserReputation;
 import com.example.travel.user.entity.UserPreference;
@@ -28,6 +29,7 @@ import com.example.travel.social.repository.ContentFavoriteRepository;
 import com.example.travel.common.exception.BusinessException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.validation.Valid;
@@ -183,10 +185,9 @@ public class UserController {
             // 这里暂未单独建封面字段，如有需要可扩展 t_user_profile
             dto.setCoverImage(null);
         }
-        // 昵称兜底：如果档案中没有设置昵称，则回退到邮箱或手机号，避免前端显示“旅友”
+        // 昵称兜底：如果档案中没有设置昵称，则使用「旅人{id}」避免前端显示邮箱/手机号
         if (dto.getNickname() == null || dto.getNickname().isBlank()) {
-            String name = target.getEmail() != null ? target.getEmail() : target.getPhone();
-            dto.setNickname(name != null ? name : "旅友");
+            dto.setNickname("旅人" + target.getId());
         }
         if (reputation != null) {
             dto.setReputationScore(reputation.getScore());
@@ -282,6 +283,7 @@ public class UserController {
     public ApiResponse<List<TravelNoteDtos.Summary>> listUserNotes(@PathVariable Long userId) {
         User target = userRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.badRequest("用户不存在"));
+        String authorName = resolveAuthorName(target);
         List<TravelNote> notes = travelNoteRepository.findByAuthorOrderByCreatedAtDesc(target);
         List<TravelNoteDtos.Summary> list = notes.stream().map(n -> {
             TravelNoteDtos.Summary s = new TravelNoteDtos.Summary();
@@ -289,11 +291,26 @@ public class UserController {
             s.setTitle(n.getTitle());
             s.setDestination(n.getDestination());
             s.setCoverImage(n.getCoverImage());
-            s.setAuthorName(target.getEmail() != null ? target.getEmail() : target.getPhone());
+            s.setAuthorId(target.getId());
+            s.setAuthorName(authorName);
             s.setCreatedAt(n.getCreatedAt());
+            s.setLikeCount(contentLikeRepository.countByTargetTypeAndTargetId("note", n.getId()));
+            s.setCommentCount(commentRepository.countByTargetTypeAndTargetId("note", n.getId()));
             return s;
         }).collect(Collectors.toList());
         return ApiResponse.success(list);
+    }
+
+    /** 优先使用昵称，无昵称时回退到邮箱/手机号 */
+    private String resolveAuthorName(User user) {
+        UserProfile profile = userProfileRepository.findById(user.getId()).orElse(null);
+        if (profile != null && profile.getNickname() != null && !profile.getNickname().isBlank()) {
+            return profile.getNickname();
+        }
+        if (user.getEmail() != null && !user.getEmail().isBlank()) {
+            return user.getEmail();
+        }
+        return user.getPhone() != null ? user.getPhone() : "用户";
     }
 
     @GetMapping("/{userId}/routes")
@@ -311,7 +328,10 @@ public class UserController {
             dto.setBudget(p.getBudget());
             dto.setPeopleCount(p.getPeopleCount());
             dto.setPace(p.getPace());
-            dto.setDays(null);
+            dto.setDays(List.of());
+            long usedByNotes = travelNoteRepository.countByRelatedPlanId(p.getId());
+            long usedByCompanion = companionPostRepository.countByRelatedPlanId(p.getId());
+            dto.setUsedCount(usedByNotes + usedByCompanion);
             return dto;
         }).collect(Collectors.toList());
         return ApiResponse.success(list);
@@ -384,6 +404,39 @@ public class UserController {
         return ApiResponse.success(result);
     }
 
+    /** 我关注的人列表（用于邀请成员等） */
+    @GetMapping("/me/following")
+    public ApiResponse<List<UserDtos.FollowingItem>> myFollowing() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
+            throw BusinessException.unauthorized("请先登录");
+        }
+        String username = auth.getName();
+        User current = username.contains("@")
+                ? userRepository.findByEmail(username).orElse(null)
+                : userRepository.findByPhone(username).orElse(null);
+        if (current == null) {
+            throw BusinessException.unauthorized("用户不存在");
+        }
+        List<UserFollow> follows = userFollowRepository.findByFollowerOrderByCreatedAtDesc(current);
+        List<UserDtos.FollowingItem> items = follows.stream().map(f -> {
+            User followee = f.getFollowee();
+            UserProfile profile = userProfileRepository.findById(followee.getId()).orElse(null);
+            UserDtos.FollowingItem item = new UserDtos.FollowingItem();
+            item.setUserId(followee.getId());
+            String nickname = "旅友";
+            if (profile != null && profile.getNickname() != null && !profile.getNickname().isBlank()) {
+                nickname = profile.getNickname();
+            } else if (followee.getPhone() != null && !followee.getPhone().isBlank()) {
+                nickname = followee.getPhone();
+            }
+            item.setNickname(nickname);
+            item.setAvatar(profile != null ? profile.getAvatar() : null);
+            return item;
+        }).collect(Collectors.toList());
+        return ApiResponse.success(items);
+    }
+
     @PostMapping("/{userId}/follow")
     public ApiResponse<Void> follow(@PathVariable Long userId) {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
@@ -413,6 +466,7 @@ public class UserController {
     }
 
     @PostMapping("/{userId}/unfollow")
+    @Transactional
     public ApiResponse<Void> unfollow(@PathVariable Long userId) {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {

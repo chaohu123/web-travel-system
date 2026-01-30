@@ -29,5 +29,11 @@ public class CommentController {
                                                            @RequestParam Long targetId) {
         return ApiResponse.success(commentService.list(targetType, targetId));
     }
+
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> delete(@PathVariable Long id) {
+        commentService.delete(id);
+        return ApiResponse.success();
+    }
 }
 

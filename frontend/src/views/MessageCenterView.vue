@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessageStore, type InteractionCategory } from '../store/message'
-import { ChatDotRound, ChatLineRound, Star } from '@element-plus/icons-vue'
+import { ArrowLeft, ChatDotRound, ChatLineRound, Star } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const messageStore = useMessageStore()
@@ -39,6 +39,14 @@ function interactionActionLabel(type: 'LIKE' | 'COMMENT', targetType: 'NOTE' | '
   return targetType === 'NOTE' ? '评论了你的游记' : '评论了你的路线'
 }
 
+function goBack() {
+  if (window.history.length > 1) {
+    router.back()
+  } else {
+    router.push({ name: 'home' })
+  }
+}
+
 function goToTarget(targetType: 'NOTE' | 'ROUTE', targetId: number) {
   if (targetType === 'NOTE') {
     router.push({ name: 'note-detail', params: { id: targetId } })
@@ -54,15 +62,23 @@ async function handleInteractionClick(id: number, targetType: 'NOTE' | 'ROUTE', 
 
 async function handleConversationClick(conversationId: number, peerUserId: number) {
   await messageStore.clearConversationUnread(conversationId)
+  // 清空未读后刷新总未读数
+  await messageStore.fetchOverview().catch(() => {})
   router.push({ name: 'chat', params: { id: peerUserId } })
 }
 
 async function markAllInteractionRead() {
   await messageStore.markAllInteractionRead()
+  // 全部标记已读后刷新总未读数
+  await messageStore.fetchOverview().catch(() => {})
 }
 
-function onTabChange(name: string | number) {
+async function onTabChange(name: string | number) {
   activeCategory.value = name as 'interaction' | 'private'
+  // 切换到私信标签时刷新会话列表
+  if (name === 'private') {
+    await loadConversations(true)
+  }
 }
 
 async function loadInteraction(reset = false) {
@@ -91,14 +107,37 @@ async function loadMoreConversations() {
   await loadConversations()
 }
 
+let refreshTimer: number | null = null
+
 onMounted(async () => {
   await Promise.all([loadInteraction(true), loadConversations(true)])
+  // 每10秒自动刷新会话列表（仅在私信标签页时）
+  refreshTimer = window.setInterval(() => {
+    if (activeCategory.value === 'private') {
+      loadConversations(true).catch(() => {})
+    }
+  }, 10000)
+})
+
+// 当页面激活时（从其他页面返回时）刷新会话列表，确保显示最新消息
+onActivated(async () => {
+  if (activeCategory.value === 'private') {
+    await loadConversations(true)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (refreshTimer != null) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
 })
 </script>
 
 <template>
   <div class="message-page">
     <div class="message-header">
+      <el-button class="back-btn" :icon="ArrowLeft" circle @click="goBack" />
       <div>
         <h1 class="title">消息中心</h1>
         <p class="subtitle">共 {{ totalUnread }} 条未读消息</p>
@@ -263,7 +302,10 @@ onMounted(async () => {
                   </el-avatar>
                   <div class="conversation-main">
                     <div class="conversation-top">
-                      <span class="nickname">{{ item.peerNickname }}</span>
+                      <div class="conversation-top-left">
+                        <span class="nickname">{{ item.peerNickname }}</span>
+                        <el-tag v-if="item.peerIsFollower" size="small" type="info" effect="plain" class="fan-tag">粉丝</el-tag>
+                      </div>
                       <span class="time">{{ formatTime(item.lastMessageTime) }}</span>
                     </div>
                     <div class="conversation-bottom">
@@ -462,7 +504,10 @@ onMounted(async () => {
                 </el-avatar>
                 <div class="conversation-main">
                   <div class="conversation-top">
-                    <span class="nickname">{{ item.peerNickname }}</span>
+                    <div class="conversation-top-left">
+                      <span class="nickname">{{ item.peerNickname }}</span>
+                      <el-tag v-if="item.peerIsFollower" size="small" type="info" effect="plain" class="fan-tag">粉丝</el-tag>
+                    </div>
                     <span class="time">{{ formatTime(item.lastMessageTime) }}</span>
                   </div>
                   <div class="conversation-bottom">
@@ -499,8 +544,12 @@ onMounted(async () => {
 .message-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 16px;
+}
+
+.message-header .back-btn {
+  flex-shrink: 0;
 }
 
 .title {
@@ -735,6 +784,22 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+}
+
+.conversation-top-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.conversation-top .fan-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 0 6px;
+  height: 18px;
+  line-height: 18px;
 }
 
 .conversation-bottom {

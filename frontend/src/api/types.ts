@@ -86,6 +86,13 @@ export interface UpdateProfileRequest {
   slogan?: string
 }
 
+/** 我关注的人（用于邀请成员等列表） */
+export interface FollowingItem {
+  userId: number
+  nickname: string
+  avatar?: string | null
+}
+
 /** 路线 */
 export interface TripPlanDay {
   dayIndex: number
@@ -158,17 +165,57 @@ export interface CompanionPostDetail extends CompanionPostSummary {
   teamId?: number
 }
 
+/** 小队成员项（后端返回） */
+export interface TeamMemberItem {
+  userId: number
+  userName: string
+  avatar?: string | null
+  reputationLevel?: number | null
+  role: string
+  state: string
+}
+
+/** 小队详情（后端返回） */
+export interface TeamDetail {
+  id: number
+  name: string
+  status: string
+  postId: number | null
+  destination: string | null
+  startDate: string | null
+  endDate: string | null
+  relatedPlanId: number | null
+  /** 结伴帖最大人数 */
+  maxPeople?: number | null
+  budgetMin?: number | null
+  budgetMax?: number | null
+  members: TeamMemberItem[]
+}
+
 /** 游记摘要 */
 export interface NoteSummary {
   id: number
   title: string
   destination?: string
   coverImage?: string
+  /** 作者用户 ID，用于判断是否可删除/编辑 */
+  authorId?: number
   authorName?: string
   createdAt?: string
   /** 点赞数与评论数，用于个人主页卡片展示，可选 */
   likeCount?: number
   commentCount?: number
+}
+
+/** 游记详情页「相关景点推荐」单项，由后端根据关联路线自动生成 */
+export interface RelatedSpotItem {
+  id: string
+  name: string
+  location?: string
+  type?: string
+  timeRange?: string
+  imageUrl?: string | null
+  routeId?: number
 }
 
 /** 社区动态 */
@@ -235,6 +282,8 @@ export interface ConversationSummaryDTO {
   lastMessageTime: string // ISO 8601 格式字符串
   unreadCount: number
   pinned?: boolean
+  /** 对方是否为当前用户的粉丝（对方关注了当前用户） */
+  peerIsFollower?: boolean
 }
 
 /** 消息概览（顶部角标） */
@@ -242,9 +291,17 @@ export interface MessageOverview {
   totalUnread: number
 }
 
+/** 私信单条消息（聊天页拉取与展示） */
+export interface ChatMessageItemDTO {
+  id: number
+  senderId: number
+  content: string
+  type: string
+  createdAt: string
+}
+
 /** 社区动态流统一项：聚合游记、路线、打卡、结伴 */
 export type DynamicItemType = 'note' | 'route' | 'companion' | 'feed'
-
 export interface UnifiedDynamicItem {
   type: DynamicItemType
   id: number

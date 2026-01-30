@@ -11,5 +11,8 @@ public interface TravelNoteRepository extends JpaRepository<TravelNote, Long> {
     List<TravelNote> findByAuthorOrderByCreatedAtDesc(User author);
 
     long countByAuthor(User author);
+
+    /** 统计引用该路线的游记数量（用于路线「被使用」次数） */
+    long countByRelatedPlanId(Long relatedPlanId);
 }
 

@@ -134,7 +134,7 @@ function close() {
     <div class="form-block">
       <label class="label">公开范围</label>
       <el-radio-group v-model="visibility">
-        <el-radio v-for="opt in VISIBILITY_OPTIONS" :key="opt.value" :value="opt.value">
+        <el-radio v-for="opt in VISIBILITY_OPTIONS" :key="opt.value" :value="opt.value as string">
           {{ opt.label }}
         </el-radio>
       </el-radio-group>

@@ -20,5 +20,16 @@ public interface InteractionMessageRepository extends JpaRepository<InteractionM
     Page<InteractionMessage> findByRecipientAndTypeInOrderByCreatedAtDesc(User recipient, List<String> types, Pageable pageable);
 
     Optional<InteractionMessage> findByIdAndRecipient(Long id, User recipient);
+
+    /**
+     * 删除同一发送人对同一内容的历史点赞消息，避免用户反复点赞/取消时产生多条记录。
+     */
+    void deleteByRecipientAndFromUserAndTypeAndTargetTypeAndTargetId(
+            User recipient,
+            User fromUser,
+            String type,
+            String targetType,
+            Long targetId
+    );
 }
 

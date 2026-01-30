@@ -78,6 +78,30 @@ function goToRouteDetail(routeItem: PlanResponse) {
   router.push({ name: 'route-detail', params: { id: routeItem.id } })
 }
 
+/** 从 startDate/endDate 计算天数，无 days 时使用 */
+function routeDays(route: PlanResponse): number {
+  if (route.days?.length) return route.days.length
+  if (!route.startDate || !route.endDate) return 0
+  const start = new Date(route.startDate).getTime()
+  const end = new Date(route.endDate).getTime()
+  return Math.max(1, Math.round((end - start) / (24 * 3600 * 1000)) + 1)
+}
+
+/** 路线日期范围显示 */
+function routeDateRange(route: PlanResponse): string {
+  if (!route.startDate || !route.endDate) return ''
+  const s = new Date(route.startDate).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+  const e = new Date(route.endDate).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+  return `${s} - ${e}`
+}
+
+/** 行程节奏中文 */
+function paceLabel(pace: string | undefined): string {
+  if (!pace) return ''
+  const map: Record<string, string> = { fast: '高', medium: '中', slow: '低', rush: '高', normal: '中', relax: '低' }
+  return map[pace.toLowerCase()] ?? pace
+}
+
 function goToCompanionDetail(item: CompanionPostSummary) {
   router.push({ name: 'companion-detail', params: { id: item.id } })
 }
@@ -408,17 +432,18 @@ onMounted(async () => {
                       >
                         <div class="route-cover-placeholder">
                           <span class="route-destination">{{ item.destination }}</span>
+                          <span v-if="routeDateRange(item)" class="route-date-badge">{{ routeDateRange(item) }}</span>
                         </div>
                         <div class="route-body">
                           <h3 class="route-title">{{ item.title }}</h3>
                           <p class="route-meta">
-                            <span>预计 {{ item.days?.length || 0 }} 天</span>
+                            <span>预计 {{ routeDays(item) }} 天</span>
                             <span v-if="item.budget">· 预算 ¥{{ item.budget }}</span>
                             <span v-if="item.peopleCount">· 人数 {{ item.peopleCount }}</span>
                           </p>
                           <p class="route-meta-sub">
                             <span>被使用 {{ item.usedCount ?? 0 }} 次</span>
-                            <span v-if="item.pace">· {{ item.pace }}</span>
+                            <span v-if="paceLabel(item.pace)">· 节奏 {{ paceLabel(item.pace) }}</span>
                           </p>
                         </div>
                       </el-card>
@@ -947,11 +972,20 @@ onMounted(async () => {
   border-radius: 10px;
   background: linear-gradient(135deg, #38bdf8, #22c55e);
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
   padding: 10px 12px;
   color: #f9fafb;
   font-weight: 600;
   letter-spacing: 0.02em;
+}
+
+.route-date-badge {
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.95;
+  margin-top: 4px;
 }
 
 .route-title {

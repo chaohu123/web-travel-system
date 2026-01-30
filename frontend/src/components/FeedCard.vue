@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { CircleCheck, CircleCheckFilled, ChatDotRound, Star, StarFilled } from '@element-plus/icons-vue'
 import type { FeedItem } from '../api'
 import { commentsApi } from '../api'
 import type { CommentItem } from '../api'
@@ -139,15 +140,15 @@ function formatTime(t: string) {
     </div>
     <div class="card-actions">
       <button type="button" class="action-btn" :class="{ active: liked }" @click="toggleLike">
-        <span class="icon">{{ liked ? '❤️' : '🤍' }}</span>
+        <HeartIcon class="icon" :filled="liked" />
         <span>{{ likeCount > 0 ? likeCount : '点赞' }}</span>
       </button>
       <button type="button" class="action-btn" @click="toggleCommentPanel">
-        <span class="icon">💬</span>
+        <el-icon class="icon"><ChatDotRound /></el-icon>
         <span>评论 {{ commentCount > 0 ? commentCount : '' }}</span>
       </button>
       <button type="button" class="action-btn" :class="{ active: collected }" @click="toggleCollect">
-        <span class="icon">{{ collected ? '⭐' : '☆' }}</span>
+        <el-icon class="icon"><component :is="collected ? StarFilled : Star" /></el-icon>
         <span>收藏</span>
       </button>
     </div>

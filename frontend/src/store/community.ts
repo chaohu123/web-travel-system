@@ -101,6 +101,43 @@ export const useCommunityStore = defineStore('community', () => {
       // 关注流：后端未提供时保持原列表，可由上层传入「已关注用户 ID 列表」再筛
       list = list
     }
+    // 搜索关键词过滤
+    if (searchKeyword.value.trim()) {
+      const kw = searchKeyword.value.toLowerCase()
+      list = list.filter((item) => {
+        // 搜索作者名
+        if (item.authorName && item.authorName.toLowerCase().includes(kw)) {
+          return true
+        }
+        // 根据类型搜索不同字段
+        if (item.type === 'note' && item.note) {
+          return (
+            (item.note.title && item.note.title.toLowerCase().includes(kw)) ||
+            (item.note.destination && item.note.destination.toLowerCase().includes(kw)) ||
+            (item.note.authorName && item.note.authorName.toLowerCase().includes(kw))
+          )
+        }
+        if (item.type === 'route' && item.route) {
+          return (
+            (item.route.title && item.route.title.toLowerCase().includes(kw)) ||
+            (item.route.destination && item.route.destination.toLowerCase().includes(kw))
+          )
+        }
+        if (item.type === 'companion' && item.companion) {
+          return (
+            (item.companion.title && item.companion.title.toLowerCase().includes(kw)) ||
+            (item.companion.destination && item.companion.destination.toLowerCase().includes(kw))
+          )
+        }
+        if (item.type === 'feed' && item.feed) {
+          return (
+            (item.feed.content && item.feed.content.toLowerCase().includes(kw)) ||
+            (item.feed.authorName && item.feed.authorName.toLowerCase().includes(kw))
+          )
+        }
+        return false
+      })
+    }
     if (sortOrder.value === 'hot') {
       list = [...list].sort((a, b) => (b.hotScore ?? 0) - (a.hotScore ?? 0))
     } else {

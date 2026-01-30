@@ -58,5 +58,33 @@ public class CompanionController {
     public ApiResponse<CompanionDtos.TeamDetail> getTeam(@PathVariable Long id) {
         return ApiResponse.success(companionService.getTeamDetail(id));
     }
+
+    /** 退出小队（仅普通成员） */
+    @PostMapping("/teams/{id}/quit")
+    public ApiResponse<Void> quitTeam(@PathVariable Long id) {
+        companionService.quitTeam(id);
+        return ApiResponse.success();
+    }
+
+    /** 解散小队（仅队长） */
+    @PostMapping("/teams/{id}/dissolve")
+    public ApiResponse<Void> dissolveTeam(@PathVariable Long id) {
+        companionService.dissolveTeam(id);
+        return ApiResponse.success();
+    }
+
+    /** 队长移除指定成员 */
+    @DeleteMapping("/teams/{teamId}/members/{userId}")
+    public ApiResponse<Void> removeMember(@PathVariable Long teamId, @PathVariable Long userId) {
+        companionService.removeMember(teamId, userId);
+        return ApiResponse.success();
+    }
+
+    /** 队长将小队分享给指定用户，被分享人可查看该行程 */
+    @PostMapping("/teams/{teamId}/share")
+    public ApiResponse<Void> shareTeam(@PathVariable Long teamId, @RequestParam Long userId) {
+        companionService.shareTeam(teamId, userId);
+        return ApiResponse.success();
+    }
 }
 
