@@ -19,6 +19,7 @@ import CommunityView from '../views/CommunityView.vue'
 import ProfileView from '../views/ProfileView.vue'
 import UserProfileView from '../views/UserProfileView.vue'
 import ChatView from '../views/ChatView.vue'
+import TeamChatView from '../views/TeamChatView.vue'
 import MessageCenterView from '../views/MessageCenterView.vue'
 import { useAuthStore } from '../store'
 
@@ -31,6 +32,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/routes/:id', name: 'route-detail', component: RouteDetailView },
   { path: '/spots/:id', name: 'spot-detail', component: SpotDetailView },
   { path: '/users/:id', name: 'user-profile', component: UserProfileView },
+  { path: '/chat/team/:postId', name: 'team-chat', component: TeamChatView, meta: { requiresAuth: true } },
   { path: '/chat/:id', name: 'chat', component: ChatView },
   { path: '/companion', name: 'companion-list', component: CompanionListView },
   { path: '/companion/create', name: 'companion-create', component: CompanionCreateView },
@@ -49,11 +51,17 @@ const routes: RouteRecordRaw[] = [
 export const router = createRouter({
   history: createWebHistory(),
   routes,
+  scrollBehavior(_to, _from, savedPosition) {
+    // 浏览器前进/后退时恢复之前的滚动位置
+    if (savedPosition) return savedPosition
+    // 新进入页面（如点击游记详情）从顶部开始
+    return { top: 0 }
+  },
 })
 
 // 仅对「必须登录才能访问」的页面做路由守卫：创建类、个人中心。浏览类页面（首页/结伴列表/详情/社区/游记/路线列表等）可不登录访问。
-const protectedPaths = ['/routes/create', '/companion/create', '/notes/create', '/profile']
-const protectedPathPatterns = [/^\/notes\/\d+\/edit$/]
+const protectedPaths = ['/routes/create', '/companion/create', '/notes/create', '/profile', '/messages']
+const protectedPathPatterns = [/^\/notes\/\d+\/edit$/, /^\/chat\/team\/\d+$/]
 
 router.beforeEach((to, _from, next) => {
   const auth = useAuthStore()

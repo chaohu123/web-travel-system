@@ -21,11 +21,14 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final UserDetailsService userDetailsService;
+    private final Http401UnauthorizedEntryPoint http401UnauthorizedEntryPoint;
 
     public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter,
-                          UserDetailsService userDetailsService) {
+                          UserDetailsService userDetailsService,
+                          Http401UnauthorizedEntryPoint http401UnauthorizedEntryPoint) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.userDetailsService = userDetailsService;
+        this.http401UnauthorizedEntryPoint = http401UnauthorizedEntryPoint;
     }
 
     @Bean
@@ -33,6 +36,7 @@ public class SecurityConfig {
         http
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(ex -> ex.authenticationEntryPoint(http401UnauthorizedEntryPoint))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/api/auth/**",
@@ -40,8 +44,9 @@ public class SecurityConfig {
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**"
                         ).permitAll()
-                        // 允许未登录用户查看路线详情及首页示例路线
+                        // 允许未登录用户查看路线详情及首页示例路线；AI 生成方案可匿名调用（不落库）
                         .requestMatchers(HttpMethod.GET, "/api/routes/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/routes/ai-generate").permitAll()
                         // 允许未登录用户查看公开的个人主页、游记、结伴列表等
                         // 注意：这里用单段通配符 * 匹配 /api/users/{id}/xxx（比 ** 更稳定）
                         .requestMatchers(HttpMethod.GET,

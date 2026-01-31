@@ -4,10 +4,12 @@ import com.example.travel.common.exception.BusinessException;
 import com.example.travel.companion.dto.CompanionDtos;
 import com.example.travel.companion.entity.CompanionPost;
 import com.example.travel.companion.entity.CompanionTeam;
+import com.example.travel.companion.entity.PostChatMessage;
 import com.example.travel.companion.entity.TeamMember;
 import com.example.travel.companion.entity.TeamShare;
 import com.example.travel.companion.repository.CompanionPostRepository;
 import com.example.travel.companion.repository.CompanionTeamRepository;
+import com.example.travel.companion.repository.PostChatMessageRepository;
 import com.example.travel.companion.repository.TeamMemberRepository;
 import com.example.travel.companion.repository.TeamShareRepository;
 import com.example.travel.user.entity.User;
@@ -25,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -35,6 +38,7 @@ public class CompanionService {
     private final CompanionTeamRepository companionTeamRepository;
     private final TeamMemberRepository teamMemberRepository;
     private final TeamShareRepository teamShareRepository;
+    private final PostChatMessageRepository postChatMessageRepository;
     private final UserRepository userRepository;
     private final UserProfileRepository userProfileRepository;
     private final UserPreferenceRepository userPreferenceRepository;
@@ -44,6 +48,7 @@ public class CompanionService {
                             CompanionTeamRepository companionTeamRepository,
                             TeamMemberRepository teamMemberRepository,
                             TeamShareRepository teamShareRepository,
+                            PostChatMessageRepository postChatMessageRepository,
                             UserRepository userRepository,
                             UserProfileRepository userProfileRepository,
                             UserPreferenceRepository userPreferenceRepository,
@@ -52,6 +57,7 @@ public class CompanionService {
         this.companionTeamRepository = companionTeamRepository;
         this.teamMemberRepository = teamMemberRepository;
         this.teamShareRepository = teamShareRepository;
+        this.postChatMessageRepository = postChatMessageRepository;
         this.userRepository = userRepository;
         this.userProfileRepository = userProfileRepository;
         this.userPreferenceRepository = userPreferenceRepository;
@@ -89,6 +95,25 @@ public class CompanionService {
         }
         companionPostRepository.save(post);
         return post.getId();
+    }
+
+    /**
+     * 删除结伴帖（仅创建者可删）；会一并删除关联小队、小队成员及该帖聊天消息。
+     */
+    @Transactional
+    public void deletePost(Long postId) {
+        CompanionPost post = companionPostRepository.findById(postId)
+                .orElseThrow(() -> BusinessException.badRequest("结伴信息不存在"));
+        User current = getCurrentUser();
+        if (!current.getId().equals(post.getCreator().getId())) {
+            throw BusinessException.forbidden("只能删除自己发布的结伴");
+        }
+        companionTeamRepository.findFirstByPostOrderByIdAsc(post).ifPresent(team -> {
+            teamMemberRepository.findByTeam(team).forEach(teamMemberRepository::delete);
+            companionTeamRepository.delete(team);
+        });
+        postChatMessageRepository.findByPostOrderByCreatedAtAsc(post).forEach(postChatMessageRepository::delete);
+        companionPostRepository.delete(post);
     }
 
     public List<CompanionDtos.PostSummary> search(CompanionDtos.SearchRequest req) {
@@ -242,6 +267,13 @@ public class CompanionService {
         leader.setState("joined");
         teamMemberRepository.save(leader);
 
+        // 创建小队的同时自动创建小队群聊：写入一条系统欢迎消息（该帖的聊天即小队群聊）
+        PostChatMessage welcomeMsg = new PostChatMessage();
+        welcomeMsg.setPost(post);
+        welcomeMsg.setUser(null);
+        welcomeMsg.setContent("小队已成立，快来和队友聊聊行程吧～");
+        postChatMessageRepository.save(welcomeMsg);
+
         return team.getId();
     }
 
@@ -348,6 +380,171 @@ public class CompanionService {
     }
 
     /**
+     * 获取结伴帖内置沟通（小队群聊）消息列表。仅小队成员或帖子发起人可查看；非成员看不到群聊。
+     */
+    public List<CompanionDtos.PostChatMessageItem> getPostChatMessages(Long postId) {
+        User current = getCurrentUser();
+        CompanionPost post = companionPostRepository.findById(postId)
+                .orElseThrow(() -> BusinessException.badRequest("结伴信息不存在"));
+        if (!canAccessPostChat(post, current)) {
+            throw BusinessException.forbidden("仅小队成员可查看群聊消息，请先加入活动");
+        }
+        List<PostChatMessage> list = postChatMessageRepository.findByPostOrderByCreatedAtAsc(post);
+        return list.stream().map(this::toPostChatMessageItem).collect(Collectors.toList());
+    }
+
+    /** 是否为帖子发起人或该帖对应小队的成员（可查看/发送小队群聊） */
+    private boolean canAccessPostChat(CompanionPost post, User user) {
+        if (post.getCreator() != null && post.getCreator().getId().equals(user.getId())) {
+            return true;
+        }
+        Optional<CompanionTeam> teamOpt = companionTeamRepository.findFirstByPostOrderByIdAsc(post);
+        if (teamOpt.isEmpty()) {
+            return false;
+        }
+        return teamMemberRepository.findByTeamAndUser(teamOpt.get(), user).isPresent();
+    }
+
+    /**
+     * 发送结伴帖内置沟通（小队群聊）消息。仅帖子发起人或已加入该帖对应小队的成员可发送；非成员无法发送。
+     */
+    @Transactional
+    public CompanionDtos.PostChatMessageItem sendPostChatMessage(Long postId, CompanionDtos.SendPostChatRequest request) {
+        User current = getCurrentUser();
+        CompanionPost post = companionPostRepository.findById(postId)
+                .orElseThrow(() -> BusinessException.badRequest("结伴信息不存在"));
+        if (!canAccessPostChat(post, current)) {
+            throw BusinessException.forbidden("仅小队成员可在群聊中发送消息，请先加入活动");
+        }
+        String typeRaw = request.getType() != null ? request.getType().trim().toLowerCase() : "text";
+        String type = ("spot".equals(typeRaw) || "image".equals(typeRaw) || "route".equals(typeRaw) || "companion".equals(typeRaw))
+                ? typeRaw : "text";
+        String content = request.getContent() != null ? request.getContent().trim() : "";
+        String spotJson = request.getSpotJson() != null ? request.getSpotJson().trim() : null;
+        String routeJson = request.getRouteJson() != null ? request.getRouteJson().trim() : null;
+        String companionJson = request.getCompanionJson() != null ? request.getCompanionJson().trim() : null;
+        if ("spot".equals(type)) {
+            if (spotJson == null || spotJson.isEmpty()) {
+                throw BusinessException.badRequest("景点数据不能为空");
+            }
+            if (spotJson.length() > 1000) {
+                throw BusinessException.badRequest("景点数据过长");
+            }
+            if (content.isEmpty()) content = "分享了一个景点";
+        } else if ("image".equals(type)) {
+            if (content.isEmpty()) {
+                throw BusinessException.badRequest("图片内容不能为空");
+            }
+            if (content.length() > 500_000) {
+                throw BusinessException.badRequest("图片过大");
+            }
+        } else if ("route".equals(type)) {
+            if (routeJson == null || routeJson.isEmpty()) {
+                throw BusinessException.badRequest("路线数据不能为空");
+            }
+            if (content.isEmpty()) content = "分享了一条路线";
+        } else if ("companion".equals(type)) {
+            if (companionJson == null || companionJson.isEmpty()) {
+                throw BusinessException.badRequest("结伴数据不能为空");
+            }
+            if (content.isEmpty()) content = "分享了一个结伴活动";
+        } else {
+            if (content.isEmpty()) {
+                throw BusinessException.badRequest("消息内容不能为空");
+            }
+            if (content.length() > 2000) {
+                throw BusinessException.badRequest("消息内容过长");
+            }
+        }
+        PostChatMessage msg = new PostChatMessage();
+        msg.setPost(post);
+        msg.setUser(current);
+        msg.setContent(content);
+        msg.setType(type);
+        msg.setSpotJson("spot".equals(type) ? spotJson : null);
+        msg.setRouteJson("route".equals(type) ? routeJson : null);
+        msg.setCompanionJson("companion".equals(type) ? companionJson : null);
+        postChatMessageRepository.save(msg);
+        return toPostChatMessageItem(msg);
+    }
+
+    private CompanionDtos.PostChatMessageItem toPostChatMessageItem(PostChatMessage msg) {
+        CompanionDtos.PostChatMessageItem item = new CompanionDtos.PostChatMessageItem();
+        item.setId(msg.getId());
+        if (msg.getUser() != null) {
+            item.setUserId(msg.getUser().getId());
+            UserProfile profile = userProfileRepository.findById(msg.getUser().getId()).orElse(null);
+            if (profile != null && profile.getNickname() != null && !profile.getNickname().isBlank()) {
+                item.setAuthorNickname(profile.getNickname());
+            } else {
+                item.setAuthorNickname("用户" + msg.getUser().getId());
+            }
+        } else {
+            item.setUserId(null);
+            item.setAuthorNickname("系统");
+        }
+        item.setContent(msg.getContent());
+        item.setType(msg.getType() != null ? msg.getType() : "text");
+        item.setSpotJson(msg.getSpotJson());
+        item.setRouteJson(msg.getRouteJson());
+        item.setCompanionJson(msg.getCompanionJson());
+        item.setCreatedAt(msg.getCreatedAt());
+        return item;
+    }
+
+    /**
+     * 当前用户加入的小队列表及每条小队对应结伴帖的最近一条聊天预览（供消息中心「小队消息」使用）。
+     */
+    public List<CompanionDtos.MyTeamMessageItem> myTeamMessages() {
+        User current = getCurrentUser();
+        List<TeamMember> memberships = teamMemberRepository.findByUser(current);
+        List<CompanionDtos.MyTeamMessageItem> result = new ArrayList<>();
+        Set<Long> seenTeamIds = new HashSet<>();
+        for (TeamMember m : memberships) {
+            CompanionTeam team = m.getTeam();
+            if (team == null || "disbanded".equals(team.getStatus()) || seenTeamIds.contains(team.getId())) {
+                continue;
+            }
+            seenTeamIds.add(team.getId());
+            CompanionDtos.MyTeamMessageItem item = new CompanionDtos.MyTeamMessageItem();
+            item.setTeamId(team.getId());
+            CompanionPost post = team.getPost();
+            if (post != null) {
+                item.setPostId(post.getId());
+                item.setDestination(post.getDestination() != null ? post.getDestination() : "结伴活动");
+                List<TeamMember> members = teamMemberRepository.findByTeam(team);
+                item.setMemberCount(members != null ? members.size() : 0);
+                Optional<PostChatMessage> lastMsg = postChatMessageRepository.findFirstByPostOrderByCreatedAtDesc(post);
+                if (lastMsg.isPresent()) {
+                    String content = lastMsg.get().getContent();
+                    item.setLastMessagePreview(content != null && content.length() > 80 ? content.substring(0, 80) + "…" : content);
+                    item.setLastMessageTime(lastMsg.get().getCreatedAt());
+                } else {
+                    item.setLastMessagePreview("暂无聊天记录");
+                    item.setLastMessageTime(null);
+                }
+            } else {
+                item.setPostId(null);
+                item.setDestination(team.getName() != null ? team.getName() : "小队");
+                item.setMemberCount(0);
+                item.setLastMessagePreview("暂无聊天记录");
+                item.setLastMessageTime(null);
+            }
+            result.add(item);
+        }
+        // 按最后消息时间倒序（有消息的在前）
+        result.sort((a, b) -> {
+            LocalDateTime ta = a.getLastMessageTime();
+            LocalDateTime tb = b.getLastMessageTime();
+            if (ta == null && tb == null) return 0;
+            if (ta == null) return 1;
+            if (tb == null) return -1;
+            return tb.compareTo(ta);
+        });
+        return result;
+    }
+
+    /**
      * 智能推荐结伴活动
      * 如果用户已登录，根据用户标签推荐；否则推荐热度最高的
      */
@@ -410,6 +607,10 @@ public class CompanionService {
                     .limit(limit)
                     .collect(Collectors.toList());
 
+            // 无标签匹配时降级为热度推荐，确保首页有内容展示
+            if (scoredPosts.isEmpty()) {
+                return recommendByPopularity(limit);
+            }
             return scoredPosts.stream()
                     .map(item -> toSummary(item.post))
                     .collect(Collectors.toList());
@@ -422,18 +623,10 @@ public class CompanionService {
 
     /**
      * 根据热度推荐（信誉分 + 完成行程次数）
-     * 若按日期范围查询无结果，则兜底返回最近创建的公开结伴帖
+     * 优先取最近创建的公开结伴帖，避免日期过滤过严导致无推荐
      */
     private List<CompanionDtos.PostSummary> recommendByPopularity(int limit) {
-        LocalDate now = LocalDate.now();
-        List<CompanionPost> allPosts = companionPostRepository
-                .findByDestinationContainingAndStartDateGreaterThanEqualAndEndDateLessThanEqual(
-                        "", now.minusMonths(1), now.plusYears(1));
-
-        // 无结果时兜底：取最近创建的公开帖
-        if (allPosts.isEmpty()) {
-            allPosts = companionPostRepository.findTop20ByVisibilityOrderByCreatedAtDesc("public");
-        }
+        List<CompanionPost> allPosts = companionPostRepository.findTop20ByVisibilityOrderByCreatedAtDesc("public");
 
         // 计算每个活动的热度分数
         List<CompanionPostWithScore> scoredPosts = allPosts.stream()

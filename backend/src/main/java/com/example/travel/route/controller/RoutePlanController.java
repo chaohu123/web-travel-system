@@ -35,6 +35,12 @@ public class RoutePlanController {
         return ApiResponse.success(routePlanService.getPlan(id));
     }
 
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> deletePlan(@PathVariable Long id) {
+        routePlanService.deletePlan(id);
+        return ApiResponse.success();
+    }
+
     /**
      * 热门路线（未登录可访问）
      * GET /api/routes/hot?limit=4
@@ -42,6 +48,15 @@ public class RoutePlanController {
     @GetMapping("/hot")
     public ApiResponse<List<TripPlanDtos.PlanResponse>> hot(@RequestParam(defaultValue = "4") int limit) {
         return ApiResponse.success(routePlanService.listHotPlans(limit));
+    }
+
+    /**
+     * AI 生成路线方案（不落库，仅返回多方案供前端展示）
+     * POST /api/routes/ai-generate
+     */
+    @PostMapping("/ai-generate")
+    public ApiResponse<TripPlanDtos.AiGenerateResponse> aiGenerate(@RequestBody TripPlanDtos.AiGenerateRequest request) {
+        return ApiResponse.success(routePlanService.generateAiPlan(request));
     }
 }
 

@@ -69,7 +69,13 @@ export function loadAmapScript(): Promise<void> {
     // 预加载常用插件（避免出现 AMap.Geocoder is not a constructor）
     // 文档：https://lbs.amap.com/api/javascript-api/guide/abc/plugins
     script.src = src
-    script.onerror = () => reject(new Error('Failed to load AMap script'))
+    script.onerror = () => {
+      // 脚本加载失败常见原因：网络问题、API Key 无效、控制台未添加当前域名白名单、浏览器/扩展拦截
+      console.warn(
+        '[高德地图] 脚本加载失败。请检查：1) 网络是否正常 2) .env 中 VITE_AMAP_KEY 是否正确 3) 高德控制台是否已添加当前访问域名（如 localhost）到 Key 白名单'
+      )
+      reject(new Error('Failed to load AMap script'))
+    }
 
     script.onload = () => {
       waitForAmapReady()

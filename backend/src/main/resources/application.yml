@@ -34,6 +34,8 @@ logging:
   level:
     org.springframework.web: INFO
     org.hibernate.SQL: DEBUG
+    # AI 路线调试：DEBUG 可看到 AI 返回的完整数据
+    com.example.travel.route: DEBUG
 
 springdoc:
   api-docs:
@@ -41,3 +43,13 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
 
+# AI 路线生成（OpenAI 兼容：DeepSeek / OpenAI / 通义 / 智谱等）
+# DeepSeek：base-url 与 model 已配置，请设置环境变量 OPENAI_API_KEY=你的key
+app:
+  ai:
+    enabled: true
+    api-key: ${OPENAI_API_KEY:}
+    base-url: https://api.deepseek.com
+    model: deepseek-chat
+    # DeepSeek 生成多套路线较慢，建议 120～180 秒
+    timeout-seconds: 180

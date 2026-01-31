@@ -4,15 +4,18 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
-import { routesApi } from '../api'
+import { routesApi, interactionsApi } from '../api'
 import type { PlanResponse } from '../api'
 import { useSpotStore } from '../store/spot'
+import { useAuthStore } from '../store'
+import { setSpotFavoriteDisplay, removeSpotFavoriteDisplay } from '../utils/spot_favorite_display'
 import { loadAmapScript, initAmapMap, addMarker, geocode } from '../utils/amap'
 import { formatDateTime } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()
 const store = useSpotStore()
+const auth = useAuthStore()
 
 // 返回上一页
 function goBack() {
@@ -83,9 +86,35 @@ function shareSpot() {
     .catch(() => ElMessage.info('复制失败，请手动复制地址栏链接'))
 }
 
-function toggleFavorite() {
-  store.toggleFavorite()
-  ElMessage.success(store.isFavorited ? '已收藏景点' : '已取消收藏')
+async function toggleFavorite() {
+  if (!auth.token) {
+    ElMessage.info('请先登录后再收藏景点')
+    return
+  }
+  try {
+    if (store.isFavorited) {
+      await interactionsApi.unfavorite('spot', spotId.value)
+      store.isFavorited = false
+      removeSpotFavoriteDisplay(spotId.value)
+      ElMessage.success('已取消收藏')
+    } else {
+      await interactionsApi.favorite('spot', spotId.value)
+      store.isFavorited = true
+      const d = store.detail
+      if (d) {
+        setSpotFavoriteDisplay(spotId.value, {
+          name: d.name,
+          location: d.address || d.city,
+          imageUrl: d.images?.[0],
+          lng: d.lng,
+          lat: d.lat,
+        })
+      }
+      ElMessage.success('已收藏景点')
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '操作失败，请稍后重试')
+  }
 }
 
 async function openAddToRoute() {
@@ -267,6 +296,16 @@ async function loadAll() {
   await store.fetchDetail(spotId.value, { name, location, city })
   await store.fetchComments(spotId.value)
   await store.fetchRecommend(spotId.value)
+  if (auth.token) {
+    try {
+      const summary = await interactionsApi.summary('spot', spotId.value)
+      store.isFavorited = !!summary?.favoritedByCurrentUser
+    } catch {
+      store.isFavorited = false
+    }
+  } else {
+    store.isFavorited = false
+  }
   // 等待 DOM 根据 store.detail 完成条件渲染后，再初始化图表/地图
   // 否则 distRef / mapRef 可能还是 null，导致“区域空白但无报错”
   await nextTick()
@@ -284,6 +323,16 @@ async function loadAll() {
 }
 
 watch(spotId, loadAll)
+
+watch(
+  () => store.detail,
+  (d) => {
+    if (d?.name) {
+      document.title = `${d.name} - 景点详情`
+    }
+  },
+  { immediate: true }
+)
 
 onMounted(async () => {
   await loadAll()

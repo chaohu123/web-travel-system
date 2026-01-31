@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { useRoutePlanningStore } from '../../store/routePlanning'
 
 const store = useRoutePlanningStore()
 const editingName = ref(false)
-const nameInput = ref('')
+/** 标题编辑时的字符串，勿与模板 ref 同名以免被覆盖为 DOM */
+const nameEditValue = ref('')
+const nameInputEl = ref<HTMLInputElement | null>(null)
 
 const displayName = computed(() => store.routeName)
 const startDate = computed({
@@ -22,11 +24,12 @@ const peopleCount = computed({
 const summary = computed(() => store.budgetSummary)
 
 function startEditName() {
-  nameInput.value = store.routeName
+  nameEditValue.value = store.routeName
   editingName.value = true
+  nextTick(() => nameInputEl.value?.focus())
 }
 function saveName() {
-  const v = nameInput.value?.trim()
+  const v = nameEditValue.value?.trim()
   if (v) store.setRouteName(v)
   editingName.value = false
 }
@@ -38,8 +41,8 @@ function saveName() {
       <div class="flex-1 min-w-0">
         <template v-if="editingName">
           <input
-            ref="nameInput"
-            v-model="nameInput"
+            ref="nameInputEl"
+            v-model="nameEditValue"
             type="text"
             class="route-name-input w-full text-lg font-semibold text-slate-800 border border-teal-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none"
             @blur="saveName"

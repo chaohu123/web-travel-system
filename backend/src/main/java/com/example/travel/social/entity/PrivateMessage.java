@@ -28,11 +28,15 @@ public class PrivateMessage {
     private User sender;
 
     @Lob
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "MEDIUMTEXT NOT NULL")
     private String content;
 
     @Column(length = 16)
-    private String type; // text/image/route/companion
+    private String type; // text/image/route/companion/spot
+
+    @Lob
+    @Column(name = "spot_json")
+    private String spotJson; // type=spot 时景点卡片数据 JSON
 
     private LocalDateTime createdAt;
 

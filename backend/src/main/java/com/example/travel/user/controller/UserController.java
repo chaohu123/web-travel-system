@@ -35,6 +35,7 @@ import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
 
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -432,6 +433,45 @@ public class UserController {
             }
             item.setNickname(nickname);
             item.setAvatar(profile != null ? profile.getAvatar() : null);
+            if (f.getCreatedAt() != null) {
+                item.setCreatedAt(f.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+            }
+            return item;
+        }).collect(Collectors.toList());
+        return ApiResponse.success(items);
+    }
+
+    /** 我的粉丝列表（关注我的人） */
+    @GetMapping("/me/followers")
+    public ApiResponse<List<UserDtos.FollowerItem>> myFollowers() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
+            throw BusinessException.unauthorized("请先登录");
+        }
+        String username = auth.getName();
+        User current = username.contains("@")
+                ? userRepository.findByEmail(username).orElse(null)
+                : userRepository.findByPhone(username).orElse(null);
+        if (current == null) {
+            throw BusinessException.unauthorized("用户不存在");
+        }
+        List<UserFollow> follows = userFollowRepository.findByFolloweeOrderByCreatedAtDesc(current);
+        List<UserDtos.FollowerItem> items = follows.stream().map(f -> {
+            User follower = f.getFollower();
+            UserProfile profile = userProfileRepository.findById(follower.getId()).orElse(null);
+            UserDtos.FollowerItem item = new UserDtos.FollowerItem();
+            item.setUserId(follower.getId());
+            String nickname = "旅友";
+            if (profile != null && profile.getNickname() != null && !profile.getNickname().isBlank()) {
+                nickname = profile.getNickname();
+            } else if (follower.getPhone() != null && !follower.getPhone().isBlank()) {
+                nickname = follower.getPhone();
+            }
+            item.setNickname(nickname);
+            item.setAvatar(profile != null ? profile.getAvatar() : null);
+            if (f.getCreatedAt() != null) {
+                item.setFollowedAt(f.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+            }
             return item;
         }).collect(Collectors.toList());
         return ApiResponse.success(items);

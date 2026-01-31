@@ -2,12 +2,15 @@
 import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessageStore, type InteractionCategory } from '../store/message'
-import { ArrowLeft, ChatDotRound, ChatLineRound, Star } from '@element-plus/icons-vue'
+import { companionApi } from '../api'
+import type { MyTeamMessageItem } from '../api/types'
+import { ElMessageBox } from 'element-plus'
+import { ArrowLeft, ChatDotRound, ChatLineRound, Delete, Star, UserFilled } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const messageStore = useMessageStore()
 
-const activeCategory = ref<'interaction' | 'private'>('interaction')
+const activeCategory = ref<'interaction' | 'private' | 'team'>('interaction')
 const interactionFilter = ref<InteractionCategory>('all')
 
 const isMobile = computed(() => window.innerWidth < 768)
@@ -20,6 +23,10 @@ const convoLoading = computed(() => messageStore.convoLoading)
 const interactionUnread = computed(() => messageStore.interactionUnreadCount)
 const privateUnread = computed(() => messageStore.privateUnreadCount)
 const totalUnread = computed(() => messageStore.totalUnread)
+
+/** 小队消息：当前用户加入的结伴小队及最近聊天预览 */
+const teamMessages = ref<MyTeamMessageItem[]>([])
+const teamLoading = ref(false)
 
 function formatTime(iso: string) {
   const date = new Date(iso)
@@ -60,11 +67,30 @@ async function handleInteractionClick(id: number, targetType: 'NOTE' | 'ROUTE', 
   goToTarget(targetType, targetId)
 }
 
-async function handleConversationClick(conversationId: number, peerUserId: number) {
-  await messageStore.clearConversationUnread(conversationId)
+async function handleConversationClick(item: { id: number; peerUserId: number; peerNickname?: string }) {
+  await messageStore.clearConversationUnread(item.id)
   // 清空未读后刷新总未读数
   await messageStore.fetchOverview().catch(() => {})
-  router.push({ name: 'chat', params: { id: peerUserId } })
+  router.push({
+    name: 'chat',
+    params: { id: String(item.peerUserId) },
+    query: { nickname: item.peerNickname || undefined },
+  })
+}
+
+/** 删除会话（仅对自己隐藏） */
+async function handleDeleteConversation(e: Event, item: { id: number; peerNickname: string }) {
+  e.stopPropagation()
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除与「${item.peerNickname}」的会话吗？删除后仅从你的列表隐藏，对方仍可正常聊天。`,
+      '删除会话',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+    )
+    await messageStore.deleteConversation(item.id)
+  } catch (err) {
+    // 用户取消或接口失败
+  }
 }
 
 async function markAllInteractionRead() {
@@ -74,10 +100,31 @@ async function markAllInteractionRead() {
 }
 
 async function onTabChange(name: string | number) {
-  activeCategory.value = name as 'interaction' | 'private'
-  // 切换到私信标签时刷新会话列表
+  activeCategory.value = name as 'interaction' | 'private' | 'team'
   if (name === 'private') {
     await loadConversations(true)
+  }
+  if (name === 'team') {
+    await loadTeamMessages()
+  }
+}
+
+async function loadTeamMessages() {
+  teamLoading.value = true
+  try {
+    teamMessages.value = await companionApi.getMyTeamMessages()
+  } catch {
+    teamMessages.value = []
+  } finally {
+    teamLoading.value = false
+  }
+}
+
+function goToCompanionChat(item: MyTeamMessageItem) {
+  if (item.postId != null) {
+    router.push({ name: 'team-chat', params: { postId: String(item.postId) } })
+  } else if (item.teamId) {
+    router.push(`/teams/${item.teamId}`)
   }
 }
 
@@ -295,7 +342,7 @@ onBeforeUnmount(() => {
                   :key="item.id"
                   class="conversation-item"
                   :class="{ unread: item.unreadCount > 0, pinned: item.pinned }"
-                  @click="handleConversationClick(item.id, item.peerUserId)"
+                  @click="handleConversationClick(item)"
                 >
                   <el-avatar :size="40" :src="item.peerAvatar">
                     {{ item.peerNickname?.charAt(0) || '友' }}
@@ -317,12 +364,80 @@ onBeforeUnmount(() => {
                       />
                     </div>
                   </div>
+                  <el-button
+                    class="conversation-delete-btn"
+                    :icon="Delete"
+                    link
+                    type="danger"
+                    size="small"
+                    title="删除会话"
+                    @click="handleDeleteConversation($event, item)"
+                  />
                 </div>
 
                 <div v-if="conversations.length < messageStore.convoTotal" class="load-more-wrap">
                   <el-button :loading="convoLoading" text size="small" @click="loadMoreConversations">
                     加载更多
                   </el-button>
+                </div>
+              </el-scrollbar>
+            </template>
+          </section>
+        </el-tab-pane>
+
+        <el-tab-pane name="team">
+          <template #label>
+            <span class="tab-label">
+              <el-icon class="tab-icon">
+                <UserFilled />
+              </el-icon>
+              小队消息
+            </span>
+          </template>
+          <section class="panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <span>小队消息</span>
+                <span class="panel-sub">已结伴小队的站内沟通通知</span>
+              </div>
+            </div>
+            <el-skeleton v-if="teamLoading && !teamMessages.length" animated :count="3">
+              <template #template>
+                <div class="msg-item-skeleton">
+                  <el-skeleton-item variant="circle" style="width: 40px; height: 40px" />
+                  <div class="msg-item-skeleton-main">
+                    <el-skeleton-item variant="text" style="width: 60%" />
+                    <el-skeleton-item variant="text" style="width: 40%" />
+                  </div>
+                </div>
+              </template>
+            </el-skeleton>
+            <template v-else>
+              <el-empty v-if="!teamMessages.length" description="暂无小队消息，加入结伴活动后在此查看">
+                <template #image>
+                  <el-icon class="empty-icon"><UserFilled /></el-icon>
+                </template>
+              </el-empty>
+              <el-scrollbar v-else class="list-scroll">
+                <div
+                  v-for="item in teamMessages"
+                  :key="item.teamId"
+                  class="team-msg-item"
+                  @click="goToCompanionChat(item)"
+                >
+                  <el-avatar :size="40" class="team-msg-avatar">
+                    {{ item.destination?.charAt(0) || '队' }}
+                  </el-avatar>
+                  <div class="team-msg-main">
+                    <div class="team-msg-top">
+                      <span class="nickname">{{ item.destination }}</span>
+                      <span class="time">{{ item.lastMessageTime ? formatTime(item.lastMessageTime) : '—' }}</span>
+                    </div>
+                    <div class="team-msg-bottom">
+                      <span class="preview">{{ item.lastMessagePreview }}</span>
+                      <span class="member-count">{{ item.memberCount }} 人</span>
+                    </div>
+                  </div>
                 </div>
               </el-scrollbar>
             </template>
@@ -373,6 +488,22 @@ onBeforeUnmount(() => {
             :value="privateUnread > 99 ? '99+' : privateUnread"
             class="sidebar-badge"
           />
+        </div>
+
+        <div
+          class="sidebar-item"
+          :class="{ active: activeCategory === 'team' }"
+          @click="activeCategory = 'team'; loadTeamMessages()"
+        >
+          <div class="left">
+            <el-icon class="icon team">
+              <UserFilled />
+            </el-icon>
+            <div class="text">
+              <div class="label">小队消息</div>
+              <div class="desc">已结伴小队的站内沟通</div>
+            </div>
+          </div>
         </div>
       </aside>
 
@@ -497,7 +628,7 @@ onBeforeUnmount(() => {
                 :key="item.id"
                 class="conversation-item"
                 :class="{ unread: item.unreadCount > 0, pinned: item.pinned }"
-                @click="handleConversationClick(item.id, item.peerUserId)"
+                @click="handleConversationClick(item)"
               >
                 <el-avatar :size="40" :src="item.peerAvatar">
                   {{ item.peerNickname?.charAt(0) || '友' }}
@@ -519,12 +650,70 @@ onBeforeUnmount(() => {
                     />
                   </div>
                 </div>
+                <el-button
+                  class="conversation-delete-btn"
+                  :icon="Delete"
+                  link
+                  type="danger"
+                  size="small"
+                  title="删除会话"
+                  @click="handleDeleteConversation($event, item)"
+                />
               </div>
 
               <div v-if="conversations.length < messageStore.convoTotal" class="load-more-wrap">
                 <el-button :loading="convoLoading" text size="small" @click="loadMoreConversations">
                   加载更多
                 </el-button>
+              </div>
+            </el-scrollbar>
+          </template>
+        </section>
+
+        <section v-show="activeCategory === 'team'" class="panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>小队消息</span>
+              <span class="panel-sub">已结伴小队的站内沟通通知</span>
+            </div>
+          </div>
+          <el-skeleton v-if="teamLoading && !teamMessages.length" animated :count="3">
+            <template #template>
+              <div class="msg-item-skeleton">
+                <el-skeleton-item variant="circle" style="width: 40px; height: 40px" />
+                <div class="msg-item-skeleton-main">
+                  <el-skeleton-item variant="text" style="width: 60%" />
+                  <el-skeleton-item variant="text" style="width: 40%" />
+                </div>
+              </div>
+            </template>
+          </el-skeleton>
+          <template v-else>
+            <el-empty v-if="!teamMessages.length" description="暂无小队消息，加入结伴活动后在此查看">
+              <template #image>
+                <el-icon class="empty-icon"><UserFilled /></el-icon>
+              </template>
+            </el-empty>
+            <el-scrollbar v-else class="list-scroll">
+              <div
+                v-for="item in teamMessages"
+                :key="item.teamId"
+                class="team-msg-item"
+                @click="goToCompanionChat(item)"
+              >
+                <el-avatar :size="40" class="team-msg-avatar">
+                  {{ item.destination?.charAt(0) || '队' }}
+                </el-avatar>
+                <div class="team-msg-main">
+                  <div class="team-msg-top">
+                    <span class="nickname">{{ item.destination }}</span>
+                    <span class="time">{{ item.lastMessageTime ? formatTime(item.lastMessageTime) : '—' }}</span>
+                  </div>
+                  <div class="team-msg-bottom">
+                    <span class="preview">{{ item.lastMessagePreview }}</span>
+                    <span class="member-count">{{ item.memberCount }} 人</span>
+                  </div>
+                </div>
               </div>
             </el-scrollbar>
           </template>
@@ -613,6 +802,10 @@ onBeforeUnmount(() => {
   color: #6366f1;
 }
 
+.sidebar-item .icon.team {
+  color: #0d9488;
+}
+
 .sidebar-item .text .label {
   font-size: 14px;
   color: #0f172a;
@@ -683,11 +876,22 @@ onBeforeUnmount(() => {
 .interaction-item,
 .conversation-item {
   display: flex;
+  align-items: center;
   gap: 12px;
   padding: 10px 8px;
   border-radius: 12px;
   cursor: pointer;
+  position: relative;
   transition: background-color 0.15s, transform 0.1s, box-shadow 0.15s;
+}
+
+.conversation-delete-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+  opacity: 0.7;
+}
+.conversation-item:hover .conversation-delete-btn {
+  opacity: 1;
 }
 
 .interaction-item + .interaction-item,
@@ -709,6 +913,74 @@ onBeforeUnmount(() => {
 .interaction-item.unread:hover,
 .conversation-item.unread:hover {
   background: #e0f2fe;
+}
+
+.team-msg-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.team-msg-item:hover {
+  background: #f8fafc;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.team-msg-avatar {
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #5eead4, #0d9488);
+  color: #fff;
+}
+
+.team-msg-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.team-msg-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.team-msg-top .nickname {
+  font-weight: 600;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-msg-top .time {
+  font-size: 12px;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.team-msg-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.team-msg-bottom .preview {
+  font-size: 13px;
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-msg-bottom .member-count {
+  font-size: 12px;
+  color: #94a3b8;
+  flex-shrink: 0;
 }
 
 .interaction-main,

@@ -38,9 +38,35 @@ public class CompanionController {
         return ApiResponse.success(companionService.myPosts());
     }
 
+    /** 当前用户加入的小队及每条小队对应结伴帖的最近聊天预览（消息中心「小队消息」） */
+    @GetMapping("/me/teams")
+    public ApiResponse<List<CompanionDtos.MyTeamMessageItem>> myTeamMessages() {
+        return ApiResponse.success(companionService.myTeamMessages());
+    }
+
+    /** 获取结伴帖内置沟通消息列表（任何人可读）- 声明在 /posts/{id} 前避免被误匹配 */
+    @GetMapping("/posts/{postId}/chat/messages")
+    public ApiResponse<List<CompanionDtos.PostChatMessageItem>> getPostChatMessages(@PathVariable Long postId) {
+        return ApiResponse.success(companionService.getPostChatMessages(postId));
+    }
+
+    /** 发送结伴帖内置沟通消息（需登录，且为发起人或已加入小队成员）- 声明在 /posts/{id} 前避免 404 */
+    @PostMapping("/posts/{postId}/chat")
+    public ApiResponse<CompanionDtos.PostChatMessageItem> sendPostChatMessage(
+            @PathVariable Long postId,
+            @Valid @RequestBody CompanionDtos.SendPostChatRequest request) {
+        return ApiResponse.success(companionService.sendPostChatMessage(postId, request));
+    }
+
     @GetMapping("/posts/{id}")
     public ApiResponse<CompanionDtos.PostDetail> getPost(@PathVariable Long id) {
         return ApiResponse.success(companionService.getPostDetail(id));
+    }
+
+    @DeleteMapping("/posts/{id}")
+    public ApiResponse<Void> deletePost(@PathVariable Long id) {
+        companionService.deletePost(id);
+        return ApiResponse.success();
     }
 
     @PostMapping("/teams")
@@ -86,5 +112,6 @@ public class CompanionController {
         companionService.shareTeam(teamId, userId);
         return ApiResponse.success();
     }
+
 }
 

@@ -3,48 +3,53 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../store'
 import { routesApi } from '../api'
+import RouteCard from '../components/RouteCard.vue'
+import type { PlanResponse } from '../api/types'
 
 const auth = useAuthStore()
 
-interface PlanSummary {
+interface RouteCardItem {
   id: number
+  cover: string
   title: string
-  destination: string
-  startDate: string
-  endDate: string
-  budget: number
-  peopleCount: number
-  pace: string
+  tags: string[]
+  days: number
+  budgetMin: number
+  budgetMax: number
 }
 
 const loading = ref(false)
-const plans = ref<PlanSummary[]>([])
+const cardList = ref<RouteCardItem[]>([])
 const errorMsg = ref('')
 const router = useRouter()
 const route = useRoute()
 
-const HOT_FALLBACK: PlanSummary[] = [
-  {
-    id: 1,
-    title: '京都奈良文化深度 5 日游',
-    destination: '京都 / 奈良',
-    startDate: '待定',
-    endDate: '待定',
-    budget: 8000,
-    peopleCount: 2,
-    pace: 'normal',
-  },
-  {
-    id: 2,
-    title: '云南大理丽江休闲 6 日',
-    destination: '云南',
-    startDate: '待定',
-    endDate: '待定',
-    budget: 5000,
-    peopleCount: 2,
-    pace: 'relax',
-  },
+const HOT_FALLBACK: PlanResponse[] = [
+  { id: 1, title: '京都奈良文化深度 5 日游', destination: '京都 / 奈良', startDate: '待定', endDate: '待定', budget: 8000, peopleCount: 2, pace: 'normal' },
+  { id: 2, title: '云南大理丽江休闲 6 日', destination: '云南', startDate: '待定', endDate: '待定', budget: 5000, peopleCount: 2, pace: 'relax' },
 ]
+
+function daysBetween(start: string, end: string): number {
+  if (!start || !end) return 0
+  const a = new Date(start).getTime()
+  const b = new Date(end).getTime()
+  return Math.max(0, Math.round((b - a) / (24 * 60 * 60 * 1000)) + 1)
+}
+
+function mapPlanToCard(p: PlanResponse): RouteCardItem {
+  const days = daysBetween(p.startDate, p.endDate)
+  const budget = p.budget ?? 0
+  const paceTag = !p.pace ? '' : p.pace === 'fast' ? '暴走' : p.pace === 'slow' || p.pace === 'relax' ? '悠闲' : '适中'
+  return {
+    id: p.id,
+    cover: 'https://picsum.photos/seed/route' + p.id + '/400/250',
+    title: p.title || `${p.destination} ${days} 日`,
+    tags: paceTag ? [paceTag] : [],
+    days: days || 1,
+    budgetMin: budget,
+    budgetMax: budget || 5000,
+  }
+}
 
 const fetchMyPlans = async () => {
   loading.value = true
@@ -52,18 +57,18 @@ const fetchMyPlans = async () => {
   try {
     if (auth.token) {
       const list = await routesApi.myPlans()
-      plans.value = list || []
+      cardList.value = (list || []).map(mapPlanToCard)
     } else {
       const list = await routesApi.hot(8)
-      plans.value = (list && list.length ? list : HOT_FALLBACK) || []
+      const plans = list && list.length ? list : HOT_FALLBACK
+      cardList.value = plans.map(mapPlanToCard)
     }
   } catch {
     if (auth.token) {
-      plans.value = []
+      cardList.value = []
       errorMsg.value = '加载行程列表失败，请稍后重试'
     } else {
-      // 未登录时，接口失败退回到本地热门示例
-      plans.value = HOT_FALLBACK
+      cardList.value = HOT_FALLBACK.map(mapPlanToCard)
       errorMsg.value = ''
     }
   } finally {
@@ -71,25 +76,12 @@ const fetchMyPlans = async () => {
   }
 }
 
-const goDetail = (id: number) => {
-  router.push(`/routes/${id}`)
-}
-
-/** 节奏英文转中文：fast→高，medium/normal→中，slow/relax→低 */
-function paceLabel(pace?: string): string {
-  if (!pace) return '中'
-  const p = pace.toLowerCase()
-  if (p === 'fast') return '高'
-  if (p === 'slow' || p === 'relax') return '低'
-  return '中' // medium, normal 等
-}
-
 onMounted(fetchMyPlans)
 </script>
 
 <template>
   <div class="min-h-screen bg-gradient-to-br from-slate-50 via-teal-50/30 to-indigo-50/30">
-    <div class="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-8">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <h1 class="text-2xl font-bold text-slate-800">{{ auth.token ? '我的行程' : '热门线路' }}</h1>
         <router-link
@@ -129,41 +121,24 @@ onMounted(fetchMyPlans)
           加载中...
         </div>
         <div
-          v-else-if="plans.length === 0"
+          v-else-if="cardList.length === 0"
           class="rounded-2xl border border-slate-200 bg-white/80 px-4 py-12 text-center text-slate-500"
         >
           {{ auth.token ? '你还没有创建任何行程，先去创建一个吧～' : '暂无热门线路' }}
         </div>
 
-        <div v-else class="space-y-3">
-          <article
-            v-for="plan in plans"
-            :key="plan.id"
-            class="rounded-2xl border border-slate-200/80 bg-white shadow-sm overflow-hidden flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-4 sm:p-5"
-          >
-            <div class="min-w-0 flex-1">
-              <div class="flex flex-wrap items-baseline gap-2">
-                <span class="text-lg font-semibold text-slate-800">{{ plan.destination }}</span>
-                <span class="text-sm text-slate-500">
-                  {{ plan.startDate }} ~ {{ plan.endDate }}
-                </span>
-              </div>
-              <div class="mt-2 flex flex-wrap gap-3 text-sm text-slate-500">
-                <span>预算：{{ plan.budget || 0 }} 元</span>
-                <span>人数：{{ plan.peopleCount }} 人</span>
-                <span>节奏：{{ paceLabel(plan.pace) }}</span>
-              </div>
-            </div>
-            <div class="flex-shrink-0">
-              <button
-                type="button"
-                class="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 hover:text-slate-800 transition-colors"
-                @click="goDetail(plan.id)"
-              >
-                查看详情
-              </button>
-            </div>
-          </article>
+        <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <RouteCard
+            v-for="r in cardList"
+            :key="r.id"
+            :cover="r.cover"
+            :title="r.title"
+            :tags="r.tags"
+            :days="r.days"
+            :budget-min="r.budgetMin"
+            :budget-max="r.budgetMax"
+            :route-id="r.id"
+          />
         </div>
       </template>
     </div>

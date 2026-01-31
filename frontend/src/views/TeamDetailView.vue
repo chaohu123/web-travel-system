@@ -438,7 +438,7 @@ watch(teamId, () => {
                   </div>
                   <div class="member-extra">
                     <span class="member-state">状态：{{ stateLabel(m.state) }}</span>
-                    <span class="member-reputation">信誉 {{ reputationLabel(m.reputationLevel) }}</span>
+                    <span class="member-reputation">信誉 {{ reputationLabel(m.reputationLevel ?? undefined) }}</span>
                   </div>
                 </div>
                 <div class="member-actions">

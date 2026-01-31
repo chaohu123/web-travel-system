@@ -35,7 +35,11 @@ const isSelf = computed(() => store.isSelf)
 
 function handleMessageClick() {
   if (!userId.value) return
-  router.push({ name: 'chat', params: { id: userId.value } })
+  router.push({
+    name: 'chat',
+    params: { id: userId.value },
+    query: { nickname: store.profile?.nickname },
+  })
 }
 
 function handleCompanionClick() {
@@ -67,7 +71,7 @@ async function handleFollowClick() {
 }
 
 function goBack() {
-  router.back()
+  router.push('/')
 }
 
 function goToNoteDetail(note: NoteSummary) {
@@ -612,7 +616,7 @@ onMounted(async () => {
     </el-dialog>
 
     <div class="back-btn-wrap desktop-only">
-      <el-button text @click="goBack">返回上一页</el-button>
+      <el-button text @click="goBack">返回</el-button>
     </div>
   </div>
 </template>

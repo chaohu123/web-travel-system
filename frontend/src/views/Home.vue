@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import RouteCard from '../components/RouteCard.vue'
 import BuddyCard from '../components/BuddyCard.vue'
@@ -324,7 +324,7 @@ async function loadCommunity() {
           const summary = await interactionsApi.summary('feed', f.id)
           return {
             id: f.id,
-            cover: f.imageUrlsJson ? JSON.parse(f.imageUrlsJson)[0] : undefined,
+            cover: f.imageUrlsJson ? JSON.parse(f.imageUrlsJson)[0] : 'https://picsum.photos/seed/feed' + f.id + '/400/250',
             title: f.content.length > 50 ? f.content.substring(0, 50) + '...' : f.content,
             authorAvatar: '',
             authorName: f.authorName || '用户',
@@ -337,7 +337,7 @@ async function loadCommunity() {
         } catch {
           return {
             id: f.id,
-            cover: f.imageUrlsJson ? JSON.parse(f.imageUrlsJson)[0] : undefined,
+            cover: f.imageUrlsJson ? JSON.parse(f.imageUrlsJson)[0] : 'https://picsum.photos/seed/feed' + f.id + '/400/250',
             title: f.content.length > 50 ? f.content.substring(0, 50) + '...' : f.content,
             authorAvatar: '',
             authorName: f.authorName || '用户',
@@ -417,6 +417,11 @@ function onCommunityLikeChange(payload: { liked: boolean; likes: number }, itemI
     item.liked = payload.liked
   }
 }
+
+// 登录后重新加载结伴推荐（后端可根据用户标签做智能推荐）
+watch(() => auth.token, (token) => {
+  if (token) loadBuddies()
+})
 
 onMounted(() => {
   loadUserDetail()

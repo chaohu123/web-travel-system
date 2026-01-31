@@ -13,7 +13,9 @@ import type { PlanResponse, TripPlanActivity } from '../api'
 import type { UserPublicProfile } from '../api/types'
 
 import type { TeamMemberItem } from '../api/types'
+import type { TeamChatSpotPayload } from '../api/types'
 
+// 页面展示用的聊天消息（由后端 PostChatMessageItem 转换而来）
 interface ChatMessage {
   id: number
   fromSelf: boolean
@@ -21,7 +23,8 @@ interface ChatMessage {
   time: string
   content: string
   status: 'sent' | 'pending'
-  type: 'text' | 'image' | 'voice'
+  type: 'text' | 'image' | 'voice' | 'spot'
+  spotPayload?: TeamChatSpotPayload | null
 }
 
 const route = useRoute()
@@ -46,10 +49,12 @@ const creatorProfile = ref<UserPublicProfile | null>(null)
 const activeAccordion = ref<string | number>('')
 const activeTab = ref<'itinerary' | 'map' | 'chat'>('itinerary')
 
-// 聊天与协作
+// 聊天与协作（内置沟通：从后端拉取 + 发送写入）
 const messages = ref<ChatMessage[]>([])
 const newMessage = ref('')
 const chatLoading = ref(false)
+const chatSending = ref(false)
+const chatMessagesRef = ref<HTMLDivElement | null>(null)
 const collaborationEvents = ref<string[]>([
   '队长 小鹿 更新了第 2 天的行程顺序',
   '新成员 行者老张 加入了活动',
@@ -84,6 +89,13 @@ const isJoined = computed(() => {
 const isLeader = computed(() => {
   if (!auth.userId) return false
   return teamMembers.value.some((m) => m.userId === auth.userId && m.role === 'leader')
+})
+
+// 是否有权在结伴页内置沟通中发送消息：发起人或已加入小队成员
+const canSendChat = computed(() => {
+  if (!auth.userId || !post.value) return false
+  if (post.value.creatorId === auth.userId) return true
+  return teamMembers.value.some((m) => m.userId === auth.userId)
 })
 
 function tripDays(): number {
@@ -225,33 +237,65 @@ async function fetchRecommended() {
   }
 }
 
-// 模拟加载历史聊天记录（真实项目可对接后端接口）
+// 将后端返回的 ISO 时间格式化为聊天展示用：今天 HH:mm，昨天 昨天 HH:mm，更早则 MM-DD HH:mm
+function formatChatTime(createdAt: string): string {
+  if (!createdAt) return '--'
+  const d = new Date(createdAt)
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const msgDate = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  const diffDays = Math.floor((today.getTime() - msgDate.getTime()) / (24 * 60 * 60 * 1000))
+  const timeStr = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  if (diffDays === 0) return timeStr
+  if (diffDays === 1) return `昨天 ${timeStr}`
+  if (diffDays < 7) return `${diffDays}天前 ${timeStr}`
+  return `${d.getMonth() + 1}-${d.getDate()} ${timeStr}`
+}
+
+// 从后端拉取小队群聊消息（仅小队成员或发起人可查看；非成员不请求接口且不展示历史）
 async function fetchChatHistory() {
+  if (!postId.value) return
+  if (!canSendChat.value) {
+    messages.value = []
+    chatLoading.value = false
+    return
+  }
   chatLoading.value = true
   try {
-    messages.value = [
-      {
-        id: 1,
-        fromSelf: false,
-        author: post.value?.creatorNickname || '发起人',
-        time: '昨天 21:03',
-        content: '大家好，我计划第 2 天主要安排市区景点，如果有推荐可以一起讨论～',
-        status: 'sent',
-        type: 'text',
-      },
-      {
-        id: 2,
-        fromSelf: true,
-        author: auth.nickname || '我',
-        time: '昨天 21:10',
-        content: '我想在行程里加一个本地市集，可以帮忙看看是否合适吗？',
-        status: 'sent',
-        type: 'text',
-      },
-    ]
+    const list = await companionApi.getPostChatMessages(postId.value)
+    messages.value = (list || []).map((item) => {
+      let spotPayload: TeamChatSpotPayload | null = null
+      if (item.type === 'spot' && item.spotJson) {
+        try {
+          spotPayload = JSON.parse(item.spotJson) as TeamChatSpotPayload
+        } catch {
+          // ignore
+        }
+      }
+      return {
+        id: item.id,
+        fromSelf: item.userId === auth.userId,
+        author: item.authorNickname || '旅友',
+        time: formatChatTime(item.createdAt),
+        content: item.content,
+        status: 'sent' as const,
+        type: (item.type === 'spot' ? 'spot' : 'text') as 'text' | 'spot',
+        spotPayload,
+      }
+    })
+    await nextTick()
+    scrollChatToBottom()
+  } catch {
+    messages.value = []
   } finally {
     chatLoading.value = false
   }
+}
+
+// 聊天区域滚动到底部（新消息或切换 Tab 时）
+function scrollChatToBottom() {
+  const el = chatMessagesRef.value
+  if (el) el.scrollTop = el.scrollHeight
 }
 
 async function applyCompanion() {
@@ -294,6 +338,7 @@ async function quitCompanion() {
     await companionApi.quitTeam(post.value.teamId)
     ElMessage.success('已退出当前活动')
     await fetchPost()
+    messages.value = []
   } catch {
     // 用户取消
   }
@@ -318,22 +363,43 @@ function goRecommend(item: CompanionPostSummary) {
   router.push(`/companion/${item.id}`)
 }
 
-// 发送文本消息（示例：仅前端入队）
-function sendTextMessage() {
+// 发送结伴页内置沟通消息（调用后端，仅发起人或已加入成员可发）
+async function sendTextMessage() {
   const content = newMessage.value.trim()
   if (!content) return
-  const now = new Date()
-  const msg: ChatMessage = {
-    id: Date.now(),
-    fromSelf: true,
-    author: auth.nickname || '我',
-    time: now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-    content,
-    status: 'sent',
-    type: 'text',
+  if (!auth.token) {
+    ElMessage.warning('请先登录后再发送消息')
+    router.push({ name: 'login', query: { redirect: route.fullPath } })
+    return
   }
-  messages.value = [...messages.value, msg]
-  newMessage.value = ''
+  if (!canSendChat.value) {
+    ElMessage.info('加入活动后即可在此与队友沟通')
+    return
+  }
+  if (!postId.value) return
+  chatSending.value = true
+  try {
+    const item = await companionApi.sendPostChatMessage(postId.value, content)
+    messages.value = [
+      ...messages.value,
+      {
+        id: item.id,
+        fromSelf: true,
+        author: item.authorNickname || auth.nickname || '我',
+        time: formatChatTime(item.createdAt),
+        content: item.content,
+        status: 'sent' as const,
+        type: 'text' as const,
+      },
+    ]
+    newMessage.value = ''
+    await nextTick()
+    scrollChatToBottom()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || e?.message || '发送失败')
+  } finally {
+    chatSending.value = false
+  }
 }
 
 // 初始化高德地图：景点映射为真实坐标，每日行程为一条时间轴折线
@@ -547,7 +613,12 @@ async function initMap() {
     })
   } catch (error) {
     console.error('地图初始化失败:', error)
-    ElMessage.warning('地图加载失败，请检查高德地图API配置')
+    // 脚本加载失败时给出更具体的排查提示（网络、Key、域名白名单、浏览器拦截等）
+    const msg =
+      (error as Error)?.message === 'Failed to load AMap script'
+        ? '地图脚本加载失败，请检查网络、高德 API Key 及控制台中的域名白名单（需包含当前访问地址如 localhost）'
+        : '地图加载失败，请检查高德地图 API 配置'
+    ElMessage.warning(msg)
   }
 }
 
@@ -562,7 +633,9 @@ function resizeMap() {
 watch(
   postId,
   () => {
-    fetchPost()
+    fetchPost().then(() => {
+      if (postId.value) fetchChatHistory()
+    })
   },
   { immediate: false }
 )
@@ -571,6 +644,13 @@ watch(activeTab, (tab) => {
   if (tab === 'map' && plan.value?.days?.length) {
     nextTick().then(() => initMap())
   }
+  if (tab === 'chat') {
+    nextTick().then(() => scrollChatToBottom())
+  }
+})
+
+watch(() => route.query.tab, () => {
+  applyTabFromQuery()
 })
 
 watch(activeMapDay, () => {
@@ -579,18 +659,27 @@ watch(activeMapDay, () => {
   }
 })
 
+// 支持从消息中心「小队消息」跳转时直接打开内置沟通 Tab（?tab=chat）
+function applyTabFromQuery() {
+  const tab = route.query.tab as string
+  if (tab === 'chat') activeTab.value = 'chat'
+  if (tab === 'map') activeTab.value = 'map'
+}
+
 onMounted(async () => {
+  applyTabFromQuery()
   loading.value = true
   await fetchPost()
   await fetchRecommended()
   await fetchChatHistory()
   loading.value = false
-  if (plan.value?.days?.length) activeAccordion.value = `day-${plan.value.days[0].dayIndex}`
+  if (plan.value?.days?.length) activeAccordion.value = `day-${plan.value.days[0]?.dayIndex ?? 1}`
 
   if (activeTab.value === 'map' && plan.value?.days?.length) {
     await nextTick()
     await initMap()
   }
+  if (activeTab.value === 'chat') nextTick().then(() => scrollChatToBottom())
   window.addEventListener('resize', resizeMap)
 })
 
@@ -814,23 +903,33 @@ onBeforeUnmount(() => {
                   <h2 class="section-title">站内安全聊天</h2>
                   <div class="chat-grid">
                     <div class="chat-panel">
-                      <div class="chat-messages" :class="{ 'is-loading': chatLoading }">
-                        <div v-if="chatLoading" class="chat-loading text-subtle">加载聊天记录...</div>
+                      <div ref="chatMessagesRef" class="chat-messages" :class="{ 'is-loading': chatLoading && canSendChat }">
+                        <div v-if="!canSendChat" class="chat-placeholder text-subtle">
+                          仅小队成员可查看群聊。加入活动后即可在此与队友沟通。
+                        </div>
                         <template v-else>
-                          <div
-                            v-for="m in messages"
-                            :key="m.id"
-                            class="chat-item"
-                            :class="{ self: m.fromSelf }"
-                          >
+                          <div v-if="chatLoading" class="chat-loading text-subtle">加载聊天记录...</div>
+                          <template v-else>
+                            <div
+                              v-for="m in messages"
+                              :key="m.id"
+                              class="chat-item"
+                              :class="{ self: m.fromSelf }"
+                            >
                             <div class="chat-meta">
                               <span class="chat-author">{{ m.fromSelf ? '我' : m.author }}</span>
                               <span class="chat-time">{{ m.time }}</span>
                             </div>
-                            <div class="chat-bubble">
+                            <div v-if="m.type === 'spot' && m.spotPayload" class="chat-bubble chat-bubble-spot" @click="router.push(`/routes/${m.spotPayload!.routeId}`)">
+                              <div class="chat-spot-title">景点：{{ m.spotPayload.name }}</div>
+                              <div v-if="m.spotPayload.location" class="chat-spot-meta">{{ m.spotPayload.location }}</div>
+                              <div class="chat-spot-link">查看路线详情 →</div>
+                            </div>
+                            <div v-else class="chat-bubble">
                               <span>{{ m.content }}</span>
                             </div>
                           </div>
+                          </template>
                         </template>
                       </div>
                       <div class="chat-input-bar">
@@ -839,29 +938,59 @@ onBeforeUnmount(() => {
                           type="textarea"
                           :rows="2"
                           resize="none"
-                          placeholder="和旅友安全沟通行程、预算与分工…"
+                          :placeholder="!auth.token ? '请先登录后发送消息' : !canSendChat ? '加入活动后即可在此与队友沟通' : '和旅友安全沟通行程、预算与分工…'"
                           class="chat-input"
+                          :disabled="!auth.token || !canSendChat"
                           @keyup.enter.exact.prevent="sendTextMessage"
                         />
                         <div class="chat-actions">
-                          <ElButton type="primary" size="small" @click="sendTextMessage">
+                          <ElButton
+                            type="primary"
+                            size="small"
+                            :loading="chatSending"
+                            :disabled="!auth.token || !canSendChat || !newMessage.trim()"
+                            @click="sendTextMessage"
+                          >
                             发送
                           </ElButton>
                         </div>
                       </div>
                     </div>
 
-                    <aside class="notify-panel">
-                      <h3 class="notify-title">行程协作通知</h3>
-                      <ul class="notify-list">
-                        <li
-                          v-for="(item, idx) in collaborationEvents"
-                          :key="idx"
-                          class="notify-item"
-                        >
-                          {{ item }}
-                        </li>
-                      </ul>
+                    <aside class="chat-right-col">
+                      <div class="chat-team-block">
+                        <h3 class="chat-block-title">小队成员</h3>
+                        <div v-if="teamMembers.length" class="chat-team-list">
+                          <div
+                            v-for="m in teamMembers"
+                            :key="m.userId"
+                            class="chat-team-item"
+                            @click="openMemberDetail(m)"
+                          >
+                            <ElAvatar
+                              :size="36"
+                              :src="m.avatar || undefined"
+                              class="chat-team-avatar"
+                            >
+                              {{ memberDisplayName(m).charAt(0).toUpperCase() }}
+                            </ElAvatar>
+                            <span class="chat-team-name">{{ memberDisplayName(m) }}</span>
+                          </div>
+                        </div>
+                        <p v-else class="chat-team-empty text-subtle">暂无小队成员</p>
+                      </div>
+                      <div class="notify-panel">
+                        <h3 class="notify-title">行程协作通知</h3>
+                        <ul class="notify-list">
+                          <li
+                            v-for="(item, idx) in collaborationEvents"
+                            :key="idx"
+                            class="notify-item"
+                          >
+                            {{ item }}
+                          </li>
+                        </ul>
+                      </div>
                     </aside>
                   </div>
                 </section>
@@ -1456,6 +1585,14 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
+.chat-placeholder {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #64748b;
+}
+
 .chat-item {
   margin-bottom: 10px;
   display: flex;
@@ -1488,6 +1625,32 @@ onBeforeUnmount(() => {
   color: #f9fafb;
 }
 
+.chat-bubble-spot {
+  cursor: pointer;
+  border-left: 3px solid #f59e0b;
+}
+
+.chat-spot-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.chat-spot-meta {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.chat-item.self .chat-spot-meta {
+  color: #cbd5e1;
+}
+
+.chat-spot-link {
+  font-size: 12px;
+  color: #2563eb;
+  margin-top: 4px;
+}
+
 .chat-input-bar {
   margin-top: 8px;
 }
@@ -1500,6 +1663,68 @@ onBeforeUnmount(() => {
   margin-top: 6px;
   display: flex;
   justify-content: flex-end;
+}
+
+/* 内置沟通右侧列：上半小队成员 + 下半行程协作通知 */
+.chat-right-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.chat-team-block {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 12px 14px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  border: 1px solid #e2e8f0;
+}
+
+.chat-block-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.chat-team-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-team-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.18s ease;
+}
+
+.chat-team-item:hover {
+  background: #f1f5f9;
+}
+
+.chat-team-avatar {
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #5eead4, #0d9488);
+  color: #fff;
+}
+
+.chat-team-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-team-empty {
+  margin: 0;
+  font-size: 13px;
 }
 
 .notify-panel {

@@ -81,6 +81,18 @@ public class UserDtos {
         private Long userId;
         private String nickname;
         private String avatar;
+        /** 关注时间（ISO 字符串） */
+        private String createdAt;
+    }
+
+    /** 我的粉丝（关注我的人） */
+    @Data
+    public static class FollowerItem {
+        private Long userId;
+        private String nickname;
+        private String avatar;
+        /** 被关注时间（ISO 字符串） */
+        private String followedAt;
     }
 }
 

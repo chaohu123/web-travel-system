@@ -484,6 +484,8 @@ async function fetchRelatedSpots() {
 }
 
 onMounted(async () => {
+  // 进入详情页从顶部开始浏览，避免停留在上一页的滚动位置
+  window.scrollTo(0, 0)
   await fetchDetail()
   await Promise.all([
     fetchComments(),

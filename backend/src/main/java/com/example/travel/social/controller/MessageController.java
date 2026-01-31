@@ -75,13 +75,22 @@ public class MessageController {
     }
 
     /**
+     * 删除会话（软删除：仅对自己隐藏）
+     */
+    @DeleteMapping("/conversations/{id}")
+    public ApiResponse<Void> deleteConversation(@PathVariable Long id) {
+        messageService.deleteConversation(id);
+        return ApiResponse.success();
+    }
+
+    /**
      * 发送私信给指定用户
      */
     @PostMapping("/chat/{peerUserId}")
     public ApiResponse<MessageDtos.ChatMessageItem> sendChatMessage(
             @PathVariable Long peerUserId,
             @Valid @RequestBody MessageDtos.SendChatRequest body) {
-        return ApiResponse.success(messageService.sendChatMessage(peerUserId, body.getContent()));
+        return ApiResponse.success(messageService.sendChatMessage(peerUserId, body.getContent(), body.getType(), body.getSpotJson()));
     }
 
     /**

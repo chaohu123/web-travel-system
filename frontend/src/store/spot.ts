@@ -258,6 +258,22 @@ export const useSpotStore = defineStore('spot', () => {
     isFavorited.value = !isFavorited.value
   }
 
+  /** 根据景点 ID 获取简要信息（用于私信发送景点，含封面图与坐标） */
+  function getSpotBrief(
+    id: number,
+    overrides?: { name?: string; city?: string; location?: string }
+  ): { name: string; location: string; imageUrl: string; lng: number; lat: number } {
+    const spot = mockSpot(id, overrides)
+    const cover = spot.images?.[0] || `https://picsum.photos/seed/spot${id}/400/250`
+    return {
+      name: spot.name,
+      location: spot.address || spot.city,
+      imageUrl: cover,
+      lng: spot.lng,
+      lat: spot.lat,
+    }
+  }
+
   return {
     loading,
     commentsLoading,
@@ -271,6 +287,7 @@ export const useSpotStore = defineStore('spot', () => {
     fetchComments,
     fetchRecommend,
     toggleFavorite,
+    getSpotBrief,
   }
 })
 

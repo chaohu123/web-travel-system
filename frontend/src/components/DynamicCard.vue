@@ -253,19 +253,23 @@ watch(
 
     <!-- 动态内容展示区（按类型） -->
     <div v-if="!disabled" class="card-body" @click="goDetail">
-      <!-- 游记 -->
+      <!-- 游记：左文右图小图展示 -->
       <template v-if="item.type === 'note' && item.note">
-        <h3 class="body-title">{{ item.note.title }}</h3>
-        <p class="body-summary">{{ item.note.destination || '旅行游记' }}</p>
-        <div v-if="item.note.coverImage" class="body-images body-images--single">
-          <el-image
-            :src="item.note.coverImage"
-            fit="cover"
-            lazy
-            :preview-src-list="[item.note.coverImage]"
-          />
+        <div class="body-note-row">
+          <div class="body-note-text">
+            <h3 class="body-title">{{ item.note.title }}</h3>
+            <p class="body-summary">{{ item.note.destination || '旅行游记' }}</p>
+            <el-button type="primary" text class="btn-full">查看全文</el-button>
+          </div>
+          <div v-if="item.note.coverImage" class="body-note-thumb">
+            <el-image
+              :src="item.note.coverImage"
+              fit="cover"
+              lazy
+              :preview-src-list="[item.note.coverImage]"
+            />
+          </div>
         </div>
-        <el-button type="primary" text class="btn-full">查看全文</el-button>
       </template>
 
       <!-- 路线 -->
@@ -436,6 +440,37 @@ watch(
 .body-text {
   color: #334155;
   white-space: pre-wrap;
+}
+
+.body-note-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 4px;
+}
+
+.body-note-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.body-note-thumb {
+  flex-shrink: 0;
+  width: 60px;
+  height: 45px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #f1f5f9;
+}
+
+.body-note-thumb :deep(.el-image) {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.body-note-thumb :deep(.el-image__inner) {
+  object-fit: cover;
 }
 
 .body-images {

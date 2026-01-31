@@ -1,6 +1,5 @@
 package com.example.travel.security;
 
-import com.example.travel.common.exception.BusinessException;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -43,17 +42,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             Claims claims = JwtUtil.extractAllClaims(token);
             String username = claims.getSubject();
 
-            if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            if (username != null && SecurityContextHolder.getContext().getAuthentication() == null
+                    && !JwtUtil.isTokenExpired(token)) {
                 UserDetails userDetails = userDetailsService.loadUserByUsername(username);
-                if (!JwtUtil.isTokenExpired(token)) {
-                    UsernamePasswordAuthenticationToken authToken =
-                            new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
-                    authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                    SecurityContextHolder.getContext().setAuthentication(authToken);
-                }
+                UsernamePasswordAuthenticationToken authToken =
+                        new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                SecurityContextHolder.getContext().setAuthentication(authToken);
             }
         } catch (Exception ex) {
-            throw BusinessException.unauthorized("无效的令牌");
+            // 令牌无效或过期：不抛异常，按未登录继续；若访问需认证接口则由后续安全链返回 401
+            SecurityContextHolder.clearContext();
         }
 
         filterChain.doFilter(request, response);

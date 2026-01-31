@@ -15,5 +15,7 @@ public interface UserFollowRepository extends JpaRepository<UserFollow, Long> {
     void deleteByFollowerAndFollowee(User follower, User followee);
 
     java.util.List<UserFollow> findByFollowerOrderByCreatedAtDesc(User follower);
+
+    java.util.List<UserFollow> findByFolloweeOrderByCreatedAtDesc(User followee);
 }
 

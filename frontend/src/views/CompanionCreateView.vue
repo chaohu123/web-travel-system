@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElCard, ElInput, ElButton, ElDatePicker, ElSelect, ElOption, ElInputNumber, ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
-import { api, routesApi } from '../api'
+import { companionApi, routesApi } from '../api'
 
 interface MyPlanOption {
   id: number
@@ -76,8 +76,8 @@ const onSubmit = async () => {
   loading.value = true
   errorMsg.value = ''
   try {
-    await api.post('/companion/posts', {
-      relatedPlanId: relatedPlanId.value || undefined,
+    const postId = await companionApi.publish({
+      relatedPlanId: relatedPlanId.value ?? undefined,
       destination: destination.value,
       startDate: startDate.value,
       endDate: endDate.value,
@@ -88,8 +88,9 @@ const onSubmit = async () => {
       expectedMateDesc: expectedMateDesc.value || undefined,
       visibility: visibility.value,
     })
-    ElMessage.success('发布成功')
-    router.push('/companion')
+    const teamId = await companionApi.createTeam(postId)
+    ElMessage.success('发布成功，已自动加入小队')
+    router.push(`/teams/${teamId}`)
   } catch (e: any) {
     errorMsg.value = e.response?.data?.message || '发布失败'
     ElMessage.error(errorMsg.value)
@@ -108,26 +109,34 @@ onMounted(async () => {
 
   await fetchMyPlans()
 
-  // 起始日期改为当前日期，结束日期改为 当前日期 + 路线天数
+  // 有关联行程时自动填充目的地与起止日期
+  if (relatedPlanId.value && myPlans.value.length) {
+    const plan = myPlans.value.find((p) => p.id === relatedPlanId.value)
+    if (plan) {
+      if (plan.destination && !destination.value) destination.value = plan.destination
+      if (plan.startDate && plan.endDate) {
+        const routeDays = getRouteDays(plan.startDate, plan.endDate)
+        applyCurrentDateRange(routeDays)
+      }
+    }
+  }
+
+  // 仅当 URL 带了 startDate/endDate 时用其计算日期
   const qStart = typeof q.startDate === 'string' ? q.startDate : ''
   const qEnd = typeof q.endDate === 'string' ? q.endDate : ''
-  if (qStart && qEnd) {
+  if (qStart && qEnd && !relatedPlanId.value) {
     const routeDays = getRouteDays(qStart, qEnd)
     applyCurrentDateRange(routeDays)
-  } else if (relatedPlanId.value && myPlans.value.length) {
-    const plan = myPlans.value.find((p) => p.id === relatedPlanId.value)
-    if (plan?.startDate && plan?.endDate) {
-      const routeDays = getRouteDays(plan.startDate, plan.endDate)
-      applyCurrentDateRange(routeDays)
-    }
   }
 })
 
-// 切换关联行程时，将起止日期更新为 当前日期 + 该路线天数
+// 切换关联行程时，自动填充目的地与起止日期
 watch(relatedPlanId, (planId) => {
   if (!planId) return
   const plan = myPlans.value.find((p) => p.id === planId)
-  if (plan?.startDate && plan?.endDate) {
+  if (!plan) return
+  if (plan.destination) destination.value = plan.destination
+  if (plan.startDate && plan.endDate) {
     const routeDays = getRouteDays(plan.startDate, plan.endDate)
     applyCurrentDateRange(routeDays)
   }

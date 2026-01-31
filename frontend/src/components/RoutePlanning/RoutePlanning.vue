@@ -1,21 +1,45 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import RouteHeader from './RouteHeader.vue'
 import InterestSlider from './InterestSlider.vue'
+import SelectPlanDialog from './SelectPlanDialog.vue'
 import { useRoutePlanningStore } from '../../store/routePlanning'
-import type { TransportType, IntensityType } from '../../store/routePlanning'
+import type { TransportType, IntensityType, PlanVariant } from '../../store/routePlanning'
+import { routesApi, buildAiGenerateRequest } from '../../api'
+import { loadAmapScript, initAmapMap, addMarker, addPolyline } from '../../utils/amap'
+import type { POIItem, DayPlan } from '../../store/routePlanning'
 
+const router = useRouter()
 const store = useRoutePlanningStore()
+/** 预算与 store 双向绑定，统一为数字避免滑块/输入导致类型不一致或未同步 */
+const totalBudgetSync = computed({
+  get: () => Number(store.totalBudget) || 0,
+  set: (v: number) => { store.totalBudget = Number(v) || 0 },
+})
 const generating = ref(false)
-const departCity = ref('')
 const newDest = ref('')
+const generateError = ref('')
 const expandedDays = ref<Set<number>>(new Set([1]))
 
+/** 是否有可选方案（至少一个方案有行程天数） */
+const hasPlanVariants = computed(() =>
+  store.variants.some((v) => v.days && v.days.length > 0)
+)
+
+const selectPlanVisible = ref(false)
+const savingPlan = ref(false)
+type PlanAction = 'saveRoute' | 'publishCompanion' | 'exportItinerary' | 'saveAndGoCompanion'
+const planAction = ref<PlanAction>('saveRoute')
+
+/** 与 RouteGenerateForm 一一对应：交通偏好 */
 const transportOptions: { value: TransportType; label: string }[] = [
   { value: 'public', label: '公共交通' },
   { value: 'drive', label: '自驾' },
   { value: 'mixed', label: '混合' },
 ]
+/** 与 RouteGenerateForm.pace 对应：出行节奏 */
 const intensityOptions: { value: IntensityType; label: string }[] = [
   { value: 'relaxed', label: '轻松' },
   { value: 'moderate', label: '适中' },
@@ -34,11 +58,34 @@ function addDestination() {
 }
 
 async function generateRoute() {
+  if (!store.destinations.length) {
+    generateError.value = '请至少添加一个目的地'
+    return
+  }
   generating.value = true
-  await new Promise((r) => setTimeout(r, 800))
-  store.generateItinerary()
-  expandedDays.value = new Set(activeDays.value.map((d) => d.dayIndex))
-  generating.value = false
+  generateError.value = ''
+  try {
+    const body = buildAiGenerateRequest(
+      store.routeGenerateForm,
+      store.startDate,
+      store.endDate,
+      store.peopleCount
+    )
+    console.log('[AI路线] 请求体（发送给后端）:', JSON.stringify(body, null, 2))
+    const res = await routesApi.aiGenerate(body)
+    console.log('[AI路线] 后端返回完整数据:', res)
+    console.log('[AI路线] 方案数:', res?.variants?.length ?? 0, '各方案天数:', res?.variants?.map((v) => v.days?.length ?? 0))
+    store.setVariantsFromApi(res)
+    expandedDays.value = new Set(activeDays.value.map((d) => d.dayIndex))
+  } catch (e: unknown) {
+    console.warn('[AI路线] 请求失败:', e)
+    const msg = e instanceof Error ? e.message : '生成失败，请稍后重试'
+    generateError.value = msg
+    store.generateItinerary()
+    expandedDays.value = new Set(activeDays.value.map((d) => d.dayIndex))
+  } finally {
+    generating.value = false
+  }
 }
 
 function toggleDay(dayIndex: number) {
@@ -88,20 +135,291 @@ function removeItem(dayIndex: number, itemId: string) {
   store.removeDayItem(dayIndex, itemId)
 }
 
+// ---------- 右侧地图：高德地图展示路线与每日行程 ----------
+const mapContainerRef = ref<HTMLDivElement | null>(null)
+let amapInstance: any = null
+const mapMarkers: any[] = []
+const mapPolylines: any[] = []
+const DAY_COLORS = ['#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b']
+
+function getPointsFromDays(days: DayPlan[]): { path: [number, number][]; markers: { pos: [number, number]; item: POIItem }[] } {
+  const path: [number, number][] = []
+  const markers: { pos: [number, number]; item: POIItem }[] = []
+  for (const day of days) {
+    for (const item of day.items) {
+      if (item.lng != null && item.lat != null) {
+        const pos: [number, number] = [item.lng, item.lat]
+        path.push(pos)
+        markers.push({ pos, item })
+      }
+    }
+  }
+  return { path, markers }
+}
+
+async function initRouteMap() {
+  const container = mapContainerRef.value
+  if (!container) return
+  const days = activeDays.value
+  const { path, markers } = getPointsFromDays(days)
+  if (path.length === 0) {
+    // 无坐标时只显示占位，不加载地图
+    if (amapInstance) {
+      try {
+        mapMarkers.forEach((m) => amapInstance.remove(m))
+        mapPolylines.forEach((p) => amapInstance.remove(p))
+        amapInstance.destroy()
+      } catch (_) {}
+      amapInstance = null
+      mapMarkers.length = 0
+      mapPolylines.length = 0
+    }
+    return
+  }
+  try {
+    await loadAmapScript()
+  } catch (e) {
+    console.warn('地图加载失败', e)
+    return
+  }
+  if (amapInstance) {
+    try {
+      mapMarkers.forEach((m) => amapInstance.remove(m))
+      mapPolylines.forEach((p) => amapInstance.remove(p))
+      amapInstance.destroy()
+    } catch (_) {}
+    amapInstance = null
+    mapMarkers.length = 0
+    mapPolylines.length = 0
+  }
+  amapInstance = initAmapMap(container, path[0], 12, { mapStyle: 'amap://styles/normal' })
+  const AMap = (window as any).AMap
+  for (const { pos, item } of markers) {
+    const marker = new AMap.Marker({
+      position: pos,
+      title: item.name,
+    })
+    amapInstance.add(marker)
+    mapMarkers.push(marker)
+    const content = `<div style="padding:8px;min-width:120px;"><b>${item.name}</b><br/>建议停留 ${item.stayMinutes} 分钟</div>`
+    const infoWindow = new AMap.InfoWindow({ content, offset: new AMap.Pixel(0, -30) })
+    marker.on('click', () => infoWindow.open(amapInstance, marker.getPosition()))
+  }
+  // 按天画折线，每天一种颜色
+  let idx = 0
+  for (const day of days) {
+    const dayPath: [number, number][] = []
+    for (const item of day.items) {
+      if (item.lng != null && item.lat != null) dayPath.push([item.lng, item.lat])
+    }
+    if (dayPath.length >= 2) {
+      const color = DAY_COLORS[idx % DAY_COLORS.length]
+      const line = addPolyline(amapInstance, dayPath, color)
+      mapPolylines.push(line)
+    }
+    idx++
+  }
+  amapInstance.on('complete', () => {
+    if (mapMarkers.length) amapInstance.setFitView(mapMarkers)
+    amapInstance.resize()
+  })
+}
+
+watch(
+  () => [activeDays.value, store.activeVariantId],
+  () => initRouteMap(),
+  { deep: true }
+)
+onMounted(() => initRouteMap())
+onBeforeUnmount(() => {
+  if (amapInstance) {
+    try {
+      mapMarkers.forEach((m) => amapInstance.remove(m))
+      mapPolylines.forEach((p) => amapInstance.remove(p))
+      amapInstance.destroy()
+    } catch (_) {}
+    amapInstance = null
+  }
+  mapMarkers.length = 0
+  mapPolylines.length = 0
+})
+
+/** 将 store 强度映射为后端 pace 字符串 */
+function paceFromStore(): string {
+  const i = store.intensity
+  if (i === 'relaxed') return 'relax'
+  if (i === 'high') return 'rush'
+  return 'normal'
+}
+
+/** 将分钟数转为 "HH:mm"；用于计算当日游玩时间段 */
+function minutesToTime(minutes: number): string {
+  const h = Math.floor(minutes / 60) % 24
+  const m = minutes % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+/** 将所选方案的每日行程转为 API 的 days 格式（含每个景点的 startTime/endTime，由 stayMinutes 推算） */
+function buildDaysFromVariant(variantId: string) {
+  const v = store.variants.find((x) => x.id === variantId)
+  if (!v?.days?.length) return undefined
+  const DAY_START_MINUTES = 9 * 60 // 09:00 开始
+  const GAP_MINUTES = 30 // 景点间间隔 30 分钟
+  return v.days.map((d) => {
+    let cursor = DAY_START_MINUTES
+    const activities = (d.items ?? []).map((it) => {
+      const stay = Math.max(30, it.stayMinutes || 60)
+      const startTime = minutesToTime(cursor)
+      cursor += stay
+      const endTime = minutesToTime(cursor)
+      cursor += GAP_MINUTES
+      return {
+        type: it.tags?.[0] ?? 'sight',
+        name: it.name,
+        location: it.name,
+        startTime,
+        endTime,
+        estimatedCost: stay ? Math.round((stay / 60) * 50) : 0,
+        lng: it.lng,
+        lat: it.lat,
+      }
+    })
+    return {
+      dayIndex: d.dayIndex,
+      date: d.date,
+      activities,
+    }
+  })
+}
+
+/** 从当前 store 构建创建路线请求体（可选包含所选方案的每日活动） */
+function buildCreatePlanRequest(variantId?: string) {
+  const dest = store.destinations.length ? store.destinations.join('、') : '未设置目的地'
+  const body: import('../../api/types').CreatePlanRequest = {
+    destination: dest,
+    startDate: store.startDate,
+    endDate: store.endDate,
+    budget: Number(store.totalBudget) || 0,
+    peopleCount: store.peopleCount ?? 2,
+    pace: paceFromStore(),
+    preferenceWeightsJson: JSON.stringify(store.interestWeights),
+  }
+  if (variantId) {
+    const days = buildDaysFromVariant(variantId)
+    if (days?.length) body.days = days
+  }
+  return body
+}
+
+/** 选择方案后的统一确认：根据当前 action 执行保存/跳转/导出 */
+async function onPlanSelected(variantId: string) {
+  store.setActiveVariant(variantId)
+  const action = planAction.value
+
+  if (action === 'saveRoute') {
+    savingPlan.value = true
+    try {
+      const body = buildCreatePlanRequest(variantId)
+      await routesApi.create(body)
+      ElMessage.success('路线已保存')
+      selectPlanVisible.value = false
+      router.push('/routes')
+    } catch (e: any) {
+      const msg = e?.message || e?.response?.data?.message || '保存失败'
+      ElMessage.error(msg)
+    } finally {
+      savingPlan.value = false
+    }
+    return
+  }
+
+  if (action === 'publishCompanion') {
+    selectPlanVisible.value = false
+    const dest = store.destinations.length ? store.destinations.join('、') : ''
+    router.push({
+      path: '/companion/create',
+      query: {
+        destination: dest,
+        startDate: store.startDate,
+        endDate: store.endDate,
+      },
+    })
+    return
+  }
+
+  if (action === 'exportItinerary') {
+    const v = store.variants.find((x) => x.id === variantId)
+    if (!v || !v.days?.length) {
+      ElMessage.warning('该方案暂无行程数据')
+      return
+    }
+    const lines: string[] = [
+      `# ${v.name}`,
+      '',
+      `目的地：${store.destinations.join('、') || '-'}`,
+      `日期：${store.startDate} ~ ${store.endDate}`,
+      '',
+    ]
+    for (const day of v.days) {
+      lines.push(`## Day ${day.dayIndex} ${day.date}`)
+      lines.push('')
+      for (const item of day.items ?? []) {
+        lines.push(`- **${item.name}**（建议停留 ${item.stayMinutes} 分钟）${item.tags?.length ? ` [${item.tags.join(', ')}]` : ''}`)
+      }
+      lines.push('')
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `行程-${v.name.replace(/\s+/g, '-')}-${store.startDate}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('行程已导出')
+    selectPlanVisible.value = false
+    return
+  }
+
+  if (action === 'saveAndGoCompanion') {
+    savingPlan.value = true
+    try {
+      const body = buildCreatePlanRequest(variantId)
+      const id = await routesApi.create(body)
+      ElMessage.success('路线已保存')
+      selectPlanVisible.value = false
+      router.push(`/companion/create?planId=${id}`)
+    } catch (e: any) {
+      const msg = e?.message || e?.response?.data?.message || '保存失败'
+      ElMessage.error(msg)
+    } finally {
+      savingPlan.value = false
+    }
+  }
+}
+
+function openSelectPlan(action: PlanAction) {
+  if (!hasPlanVariants.value) {
+    ElMessage.warning('请先生成路线（点击「AI 生成我的路线」）')
+    return
+  }
+  planAction.value = action
+  selectPlanVisible.value = true
+}
+
 function saveRoute() {
-  console.log('保存路线')
+  openSelectPlan('saveRoute')
 }
 function inviteBuddies() {
-  console.log('邀请旅友')
+  router.push('/companion')
 }
 function publishCompanion() {
-  console.log('发布结伴')
+  openSelectPlan('publishCompanion')
 }
 function exportItinerary() {
-  console.log('导出行程')
+  openSelectPlan('exportItinerary')
 }
 function saveAndGoCompanion() {
-  console.log('保存并进入结伴')
+  openSelectPlan('saveAndGoCompanion')
 }
 </script>
 
@@ -114,54 +432,63 @@ function saveAndGoCompanion() {
       <aside class="w-full lg:w-[30%] lg:min-w-[280px] lg:max-w-[380px] flex-shrink-0 space-y-4 overflow-y-auto">
         <el-card shadow="never" class="rounded-2xl bg-white/95 border border-slate-200/80">
           <h3 class="text-sm font-semibold text-slate-800 mb-3">行程基础信息</h3>
-          <div class="mb-3 space-y-2">
-            <div class="text-xs text-slate-500">出发城市</div>
-            <el-input
-              v-model="departCity"
-              placeholder="例如：上海"
-              size="small"
-            />
-          </div>
-          <h4 class="text-sm font-semibold text-slate-800 mb-2">目的地</h4>
-          <div class="flex flex-wrap gap-2 mb-2">
-            <span
-              v-for="d in store.destinations"
-              :key="d"
-              class="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-teal-100 text-teal-800 text-sm font-medium"
-            >
-              {{ d }}
-              <button
-                type="button"
-                class="ml-0.5 rounded-full p-0.5 hover:bg-teal-200/80 text-teal-700"
-                aria-label="删除"
-                @click="store.removeDestination(d)"
-              >
-                <span class="sr-only">删除</span>×
-              </button>
-            </span>
-          </div>
-          <div class="flex gap-2">
-            <input
-              v-model="newDest"
-              type="text"
-              placeholder="添加目的地"
-              class="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-teal-500/50 focus:border-teal-500"
-              @keydown.enter.prevent="addDestination"
-            />
-            <button
-              type="button"
-              class="px-3 py-2 rounded-lg bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200"
-              @click="addDestination"
-            >
-              添加
-            </button>
+          <div class="space-y-3">
+            <div>
+              <div class="text-xs text-slate-500 mb-1">出发地</div>
+              <el-input
+                v-model="store.departureCity"
+                placeholder="例如：上海"
+                size="small"
+              />
+            </div>
+            <div>
+              <div class="text-xs text-slate-500 mb-1">目的地</div>
+              <div class="flex flex-wrap gap-2 mb-2">
+                <span
+                  v-for="d in store.destinations"
+                  :key="d"
+                  class="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-teal-100 text-teal-800 text-sm font-medium"
+                >
+                  {{ d }}
+                  <button
+                    type="button"
+                    class="ml-0.5 rounded-full p-0.5 hover:bg-teal-200/80 text-teal-700"
+                    aria-label="删除"
+                    @click="store.removeDestination(d)"
+                  >
+                    <span class="sr-only">删除</span>×
+                  </button>
+                </span>
+              </div>
+              <div class="flex gap-2">
+                <input
+                  v-model="newDest"
+                  type="text"
+                  placeholder="输入目的地后点击添加"
+                  class="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-teal-500/50 focus:border-teal-500"
+                  @keydown.enter.prevent="addDestination"
+                />
+                <button
+                  type="button"
+                  class="px-3 py-2 rounded-lg bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200"
+                  @click="addDestination"
+                >
+                  添加
+                </button>
+              </div>
+            </div>
+            <div v-if="store.departureCity || store.destinations.length" class="text-sm text-slate-600 pt-1 border-t border-slate-100">
+              <span class="font-medium">{{ store.departureCity || '出发地' }}</span>
+              <span class="mx-1">→</span>
+              <span class="font-medium">{{ store.destinations.length ? store.destinations.join('、') : '目的地' }}</span>
+            </div>
           </div>
         </el-card>
 
         <el-card shadow="never" class="rounded-2xl bg-white/95 border border-slate-200/80">
           <h3 class="text-sm font-semibold text-slate-800 mb-2">总预算（元）</h3>
           <el-slider
-            v-model="store.totalBudget"
+            v-model="totalBudgetSync"
             :min="1000"
             :max="50000"
             :step="500"
@@ -216,6 +543,7 @@ function saveAndGoCompanion() {
           </div>
         </el-card>
 
+        <p v-if="generateError" class="text-sm text-red-600 mb-2">{{ generateError }}</p>
         <button
           type="button"
           class="w-full py-3.5 rounded-2xl font-semibold text-white shadow-lg transition-all bg-gradient-to-r from-teal-500 to-indigo-500 hover:from-teal-600 hover:to-indigo-600 hover:shadow-xl disabled:opacity-70"
@@ -244,8 +572,14 @@ function saveAndGoCompanion() {
         </div>
 
         <div class="p-4 border-b border-slate-100">
-          <div class="rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/80 flex items-center justify-center min-h-[200px] text-slate-500">
-            地图路线预览区域
+          <div class="rounded-xl overflow-hidden border border-slate-200 bg-slate-50/80 min-h-[220px] relative">
+            <div ref="mapContainerRef" class="w-full h-[220px]" />
+            <span
+              v-if="!activeDays.length || !activeDays.some((d) => d.items.some((it) => it.lng != null))"
+              class="absolute inset-0 flex items-center justify-center text-slate-500 text-sm pointer-events-none"
+            >
+              生成路线后将在此显示地图路径
+            </span>
           </div>
         </div>
 
@@ -357,6 +691,13 @@ function saveAndGoCompanion() {
         >
           导出行程
         </button>
+        <button
+          type="button"
+          class="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors"
+          @click="store.resetPlan()"
+        >
+          重置
+        </button>
       </div>
       <button
         type="button"
@@ -366,5 +707,13 @@ function saveAndGoCompanion() {
         保存并进入结伴
       </button>
     </div>
+
+    <!-- 选择方案弹窗：保存路线 / 发布结伴 / 导出行程 / 保存并进入结伴 -->
+    <SelectPlanDialog
+      v-model:visible="selectPlanVisible"
+      :variants="variants"
+      :loading="savingPlan"
+      @confirm="onPlanSelected"
+    />
   </div>
 </template>

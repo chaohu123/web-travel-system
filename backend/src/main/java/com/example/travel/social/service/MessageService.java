@@ -21,6 +21,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -66,7 +67,7 @@ public class MessageService {
     public MessageDtos.Overview overview() {
         User current = getCurrentUser();
         long unreadInteraction = interactionMessageRepository.countByRecipientAndReadIsFalse(current);
-        long unreadPrivate = privateConversationRepository.findByUser1OrUser2(current, current).stream()
+        long unreadPrivate = privateConversationRepository.findNonDeletedByUser(current).stream()
                 .mapToLong(conv -> {
                     if (conv.getUser1() != null && conv.getUser1().getId().equals(current.getId())) {
                         return conv.getUser1UnreadCount() == null ? 0 : conv.getUser1UnreadCount();
@@ -150,7 +151,7 @@ public class MessageService {
         User current = getCurrentUser();
         Pageable pageable = PageRequest.of(page - 1, pageSize);
         Page<PrivateConversation> convPage =
-                privateConversationRepository.findByUser1OrUser2OrderByLastMessageTimeDesc(current, current, pageable);
+                privateConversationRepository.findNonDeletedByUserOrderByLastMessageTimeDesc(current, pageable);
 
         List<MessageDtos.ConversationSummary> list = convPage.getContent().stream()
                 .map(conv -> toConversationSummary(conv, current))
@@ -244,12 +245,49 @@ public class MessageService {
     }
 
     /**
-     * 发送私信给指定用户，若会话不存在则创建
+     * 删除会话（软删除：仅对当前用户隐藏，对方仍可见）
      */
     @Transactional
-    public MessageDtos.ChatMessageItem sendChatMessage(Long peerUserId, String content) {
-        if (content == null || content.isBlank()) {
+    public void deleteConversation(Long conversationId) {
+        User current = getCurrentUser();
+        PrivateConversation conv = privateConversationRepository.findById(conversationId)
+                .orElseThrow(() -> BusinessException.badRequest("会话不存在"));
+        if (conv.getUser1() != null && conv.getUser1().getId().equals(current.getId())) {
+            conv.setUser1DeletedAt(LocalDateTime.now());
+        } else if (conv.getUser2() != null && conv.getUser2().getId().equals(current.getId())) {
+            conv.setUser2DeletedAt(LocalDateTime.now());
+        } else {
+            throw BusinessException.badRequest("会话不属于当前用户");
+        }
+        privateConversationRepository.save(conv);
+    }
+
+    /**
+     * 发送私信给指定用户，若会话不存在则创建。
+     * type 为 image 时 content 为图片 base64；为 spot 时 spotJson 必填；为 text 时 content 不能为空。
+     */
+    @Transactional
+    public MessageDtos.ChatMessageItem sendChatMessage(Long peerUserId, String content, String type, String spotJson) {
+        String msgType = (type != null ? type.trim().toLowerCase() : "text");
+        if (!List.of("text", "image", "spot", "route", "companion").contains(msgType)) {
+            msgType = "text";
+        }
+        if ("text".equals(msgType) && (content == null || content.isBlank())) {
             throw BusinessException.badRequest("消息内容不能为空");
+        }
+        if ("image".equals(msgType) && (content == null || content.isBlank())) {
+            throw BusinessException.badRequest("图片内容不能为空");
+        }
+        if ("spot".equals(msgType)) {
+            if (spotJson == null || spotJson.isBlank()) {
+                throw BusinessException.badRequest("景点数据不能为空");
+            }
+            if (spotJson.length() > 1000) {
+                throw BusinessException.badRequest("景点数据过长");
+            }
+            if (content == null || content.isBlank()) {
+                content = "分享了一个景点";
+            }
         }
         User current = getCurrentUser();
         if (current.getId().equals(peerUserId)) {
@@ -274,11 +312,14 @@ public class MessageService {
         PrivateMessage msg = new PrivateMessage();
         msg.setConversation(conv);
         msg.setSender(current);
-        msg.setContent(content.trim());
-        msg.setType("text");
+        msg.setContent(content != null ? content.trim() : "");
+        msg.setType(msgType);
+        if ("spot".equals(msgType) && spotJson != null && !spotJson.isBlank()) {
+            msg.setSpotJson(spotJson.trim());
+        }
         msg = privateMessageRepository.save(msg);
 
-        String preview = content.length() > 50 ? content.substring(0, 50) + "…" : content;
+        String preview = "image".equals(msgType) ? "[图片]" : "spot".equals(msgType) ? "[景点]" : (content.length() > 50 ? content.substring(0, 50) + "…" : content);
         conv.setLastMessagePreview(preview);
         conv.setLastMessageTime(msg.getCreatedAt());
         // 给接收方（peer）增加未读数：由于 user1 是较小 ID，user2 是较大 ID
@@ -295,6 +336,7 @@ public class MessageService {
         dto.setSenderId(current.getId());
         dto.setContent(msg.getContent());
         dto.setType(msg.getType());
+        dto.setSpotJson(msg.getSpotJson());
         dto.setCreatedAt(msg.getCreatedAt());
         return dto;
     }
@@ -322,6 +364,7 @@ public class MessageService {
             dto.setSenderId(m.getSender() != null ? m.getSender().getId() : null);
             dto.setContent(m.getContent());
             dto.setType(m.getType() != null ? m.getType() : "text");
+            dto.setSpotJson(m.getSpotJson());
             dto.setCreatedAt(m.getCreatedAt());
             return dto;
         }).collect(Collectors.toList());

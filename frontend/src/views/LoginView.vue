@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { authApi, userApi } from '../api'
 import { useAuthStore } from '../store'
@@ -139,58 +139,32 @@ const handleSubmit = async () => {
   }
 }
 
-const guestExplore = () => router.push('/')
-
-/** 根据时间问候（前端本地） */
-const greeting = computed(() => {
-  const h = new Date().getHours()
-  if (h < 12) return '上午好'
-  if (h < 18) return '下午好'
-  return '晚上好'
-})
-
-const greetingLine = computed(() =>
-  mode.value === 'login' ? `${greeting.value}，旅途达人来啦 👋` : '开启你的旅行计划'
-)
 </script>
 
 <template>
   <div class="auth-page" role="main" aria-label="登录或注册">
-    <section class="brand-panel" aria-hidden="true">
-      <div class="brand-panel-bg" />
-      <div class="brand-inner">
-        <div class="brand-logo">TravelMatch</div>
-        <div class="brand-content">
-          <h1>找到路线，也找到<span class="highlight">同路的人</span></h1>
+    <div class="auth-page-bg" aria-hidden="true" />
+    <div class="auth-page-inner">
+      <section class="brand-intro" aria-hidden="true">
+        <div class="brand-intro-content">
+          <h1 class="brand-title">智能旅行规划与旅伴匹配系统</h1>
+          <p class="brand-subtitle">Smart Travel Planning & Companion Matching System</p>
+          <p class="brand-slogan">找到路线，也找到同路的人</p>
           <p class="tagline-desc">
             基于你的旅行偏好，一键规划专属行程，并遇见值得信赖的旅伴。
           </p>
-          <p class="safety-row">
-            <span class="safety-item"><span class="safety-icon" aria-hidden="true">✓</span> 实名认证</span>
-            <span class="safety-item"><span class="safety-icon" aria-hidden="true">✓</span> 旅友互评</span>
-          </p>
+          <ul class="feature-list">
+            <li><span class="feature-icon" aria-hidden="true">◆</span> 智能路线规划</li>
+            <li><span class="feature-icon" aria-hidden="true">◆</span> 旅伴智能匹配</li>
+            <li><span class="feature-icon" aria-hidden="true">◆</span> 实名认证 · 旅友互评</li>
+          </ul>
           <p class="social-proof">已有 10万+ 旅友通过 TravelMatch 找到完美旅伴</p>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section class="auth-panel">
-      <div class="auth-card card">
-        <header class="auth-header">
-          <h2>{{ greetingLine }}</h2>
-          <p class="sub">登录后即可规划路线并寻找旅友</p>
-        </header>
-
-        <button
-          type="button"
-          class="guest-entry"
-          aria-label="先随便看看路线，无需登录"
-          @click="guestExplore"
-        >
-          先随便看看路线，无需登录
-        </button>
-
-        <div class="mode-toggle" role="tablist" aria-label="登录或注册">
+      <section class="auth-panel">
+        <div class="auth-card card">
+          <div class="mode-toggle" role="tablist" aria-label="登录或注册">
           <button
             type="button"
             role="tab"
@@ -349,38 +323,34 @@ const greetingLine = computed(() =>
         <p class="agree-footer">
           <a href="#" class="link" @click.prevent>用户协议</a> · <a href="#" class="link" @click.prevent>隐私政策</a>
         </p>
-      </div>
-    </section>
+        </div>
+      </section>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .auth-page {
-  min-height: 100vh;
-  display: grid;
-  grid-template-columns: minmax(0, 360px) 1fr;
-}
-
-.brand-panel {
   position: relative;
+  min-height: 100vh;
   overflow: hidden;
-  max-width: 360px;
 }
 
-.brand-panel-bg {
+.auth-page-bg {
   position: absolute;
   inset: 0;
+  z-index: 0;
   background-image: url('https://images.pexels.com/photos/346885/pexels-photo-346885.jpeg');
   background-size: cover;
   background-position: center;
   animation: brand-bg-drift 25s ease-in-out infinite;
 }
 
-.brand-panel-bg::after {
+.auth-page-bg::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, rgba(15, 23, 42, 0.68) 0%, rgba(15, 23, 42, 0.35) 50%, rgba(13, 148, 136, 0.12) 100%);
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.72) 0%, rgba(15, 23, 42, 0.4) 50%, rgba(13, 148, 136, 0.15) 100%);
   animation: overlay-pulse 12s ease-in-out infinite;
 }
 
@@ -394,83 +364,101 @@ const greetingLine = computed(() =>
   50% { opacity: 0.92; }
 }
 
-.brand-inner {
+.auth-page-inner {
   position: relative;
   z-index: 1;
-  height: 100%;
-  padding: 28px 24px;
+  display: flex;
+  align-items: stretch;
+  min-height: 100vh;
+  width: 100%;
+}
+
+.brand-intro {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  padding: 56px 56px 48px 64px;
+  max-width: 52%;
+  min-width: 320px;
+}
+
+.brand-intro-content {
+  max-width: 460px;
+  color: #fff;
+}
+
+.brand-title {
+  font-size: 32px;
+  line-height: 1.35;
+  margin: 0 0 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #fff;
+}
+
+.brand-subtitle {
+  font-size: 15px;
+  opacity: 0.9;
+  margin: 0 0 22px;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.brand-slogan {
+  font-size: 18px;
+  font-weight: 500;
+  margin: 0 0 14px;
+  color: #5eead4;
+  text-shadow: 0 0 20px rgba(94, 234, 212, 0.3);
+}
+
+.brand-intro-content .tagline-desc {
+  max-width: 100%;
+  line-height: 1.65;
+  font-size: 16px;
+  opacity: 0.92;
+  margin: 0 0 28px;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.feature-list {
+  list-style: none;
+  margin: 0 0 28px;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  color: #f9fafb;
-}
-
-.brand-logo {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-}
-
-.brand-content h1 {
-  font-size: 24px;
-  line-height: 1.4;
-  margin-bottom: 14px;
-  letter-spacing: 0.02em;
-}
-
-.brand-content h1 .highlight {
-  color: #5eead4;
-  font-weight: 700;
-  text-shadow: 0 0 20px rgba(94, 234, 212, 0.35);
-}
-
-.brand-content .tagline-desc {
-  max-width: 100%;
-  line-height: 1.55;
-  font-size: 13px;
+  gap: 14px;
+  font-size: 16px;
+  color: #fff;
   opacity: 0.95;
-  margin-bottom: 16px;
 }
 
-.brand-content .safety-row {
+.feature-list li {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px 16px;
-  margin: 0 0 14px;
-  font-size: 12px;
-  opacity: 0.92;
+  align-items: center;
+  gap: 10px;
 }
 
-.brand-content .safety-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.brand-content .safety-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: rgba(94, 234, 212, 0.25);
+.feature-icon {
   color: #5eead4;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 14px;
 }
 
-.brand-content .social-proof {
-  font-size: 12px;
+.brand-intro-content .social-proof {
+  font-size: 15px;
   opacity: 0.88;
-  line-height: 1.45;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .auth-panel {
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 520px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px 20px;
+  padding: 48px 40px;
   overflow-y: auto;
 }
 
@@ -513,43 +501,6 @@ const greetingLine = computed(() =>
 
 .auth-card :deep(.btn.full) {
   width: 100%;
-}
-
-.auth-header {
-  margin-bottom: 12px;
-}
-
-.auth-header h2 {
-  margin: 0 0 4px;
-  font-size: 20px;
-  font-weight: 600;
-  color: #111827;
-}
-
-.auth-header .sub {
-  margin: 0;
-  font-size: 13px;
-  color: #6b7280;
-}
-
-.guest-entry {
-  display: block;
-  width: 100%;
-  padding: 10px 16px;
-  margin-bottom: 18px;
-  font-size: 13px;
-  color: #6b7280;
-  background: transparent;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: border-color 0.2s, background 0.2s, color 0.2s;
-}
-
-.guest-entry:hover {
-  border-color: #0d9488;
-  color: #0d9488;
-  background: rgba(13, 148, 136, 0.06);
 }
 
 .mode-toggle {
@@ -892,55 +843,82 @@ const greetingLine = computed(() =>
   text-decoration: underline;
 }
 
+@media (max-width: 900px) {
+  .brand-intro {
+    max-width: 42%;
+    padding: 40px 24px 32px 40px;
+  }
+
+  .brand-title {
+    font-size: 24px;
+  }
+
+  .brand-subtitle,
+  .brand-slogan {
+    font-size: 14px;
+  }
+
+  .feature-list {
+    font-size: 14px;
+  }
+}
+
 @media (max-width: 768px) {
-  .auth-page {
-    grid-template-columns: 1fr;
+  .auth-page-inner {
+    flex-direction: column;
   }
 
-  .brand-panel {
+  .brand-intro {
     max-width: none;
-    height: 120px;
-    min-height: 120px;
+    min-width: 0;
+    padding: 32px 24px 24px;
+    min-height: 0;
+    align-items: flex-start;
   }
 
-  .brand-panel-bg {
-    animation-duration: 20s;
+  .brand-intro-content {
+    max-width: none;
   }
 
-  .brand-inner {
-    padding: 14px 16px;
-    justify-content: flex-end;
+  .brand-title {
+    font-size: 22px;
+    margin-bottom: 10px;
   }
 
-  .brand-logo {
+  .brand-subtitle {
+    margin-bottom: 14px;
+    font-size: 14px;
+  }
+
+  .brand-slogan {
     font-size: 16px;
+    margin-bottom: 10px;
   }
 
-  .brand-content h1 {
-    font-size: 16px;
-    margin-bottom: 0;
+  .brand-intro-content .tagline-desc {
+    margin-bottom: 20px;
+    font-size: 15px;
   }
 
-  .brand-content .tagline-desc,
-  .brand-content .safety-row,
-  .brand-content .social-proof {
+  .feature-list {
+    margin-bottom: 20px;
+    font-size: 15px;
+  }
+
+  .brand-intro-content .social-proof {
     display: none;
   }
 
   .auth-panel {
-    padding: 20px 16px 28px;
+    padding: 24px 20px 32px;
+    max-width: none;
     align-items: flex-start;
+    justify-content: flex-start;
   }
 
   .auth-card {
     padding: 22px 20px 20px;
     max-width: 100%;
-  }
-
-  .guest-entry {
-    padding: 12px 16px;
-    font-size: 14px;
-    min-height: 44px;
   }
 
   .form-input {

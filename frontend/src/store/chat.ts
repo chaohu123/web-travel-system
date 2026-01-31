@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
-export type ChatMessageType = 'text' | 'image' | 'route' | 'companion' | 'system'
+export type ChatMessageType = 'text' | 'image' | 'route' | 'companion' | 'spot' | 'system'
 
 export interface ChatRoutePayload {
   id: number
@@ -17,6 +17,23 @@ export interface ChatCompanionPayload {
   endDate: string
 }
 
+/** 景点卡片 payload（与 spotJson 一致） */
+export interface ChatSpotPayload {
+  routeId: number
+  dayIndex: number
+  activityIndex: number
+  name: string
+  location?: string
+  /** 独立收藏的景点 ID，有值时点击跳转景点详情 */
+  spotId?: number
+  /** 景点封面图 URL */
+  imageUrl?: string
+  /** 经度（查看位置用） */
+  lng?: number
+  /** 纬度（查看位置用） */
+  lat?: number
+}
+
 export interface ChatMessage {
   id: number
   from: 'me' | 'other' | 'system'
@@ -25,6 +42,7 @@ export interface ChatMessage {
   createdAt: string
   routePayload?: ChatRoutePayload
   companionPayload?: ChatCompanionPayload
+  spotPayload?: ChatSpotPayload
   imageUrl?: string
   failed?: boolean
 }
@@ -54,7 +72,7 @@ export const useChatStore = defineStore('chat', () => {
    */
   function setMessagesFromApi(
     sessionId: string,
-    items: { id: number; senderId: number; content: string; type: string; createdAt: string | number[] }[],
+    items: { id: number; senderId: number; content: string; type: string; spotJson?: string | null; createdAt: string | number[] }[],
     currentUserId: number
   ) {
     const toISO = (v: string | number[]): string => {
@@ -65,13 +83,26 @@ export const useChatStore = defineStore('chat', () => {
       }
       return new Date().toISOString()
     }
-    const list: ChatMessage[] = items.map((m) => ({
-      id: m.id,
-      from: m.senderId === currentUserId ? ('me' as const) : ('other' as const),
-      type: (m.type === 'text' || m.type === 'image' || m.type === 'route' || m.type === 'companion' ? m.type : 'text') as ChatMessageType,
-      content: m.content,
-      createdAt: toISO(m.createdAt),
-    }))
+    const list: ChatMessage[] = items.map((m) => {
+      const type = (m.type === 'text' || m.type === 'image' || m.type === 'route' || m.type === 'companion' || m.type === 'spot' ? m.type : 'text') as ChatMessageType
+      let spotPayload: ChatSpotPayload | undefined
+      if (type === 'spot' && m.spotJson) {
+        try {
+          spotPayload = JSON.parse(m.spotJson) as ChatSpotPayload
+        } catch {
+          // ignore
+        }
+      }
+      return {
+        id: m.id,
+        from: m.senderId === currentUserId ? ('me' as const) : ('other' as const),
+        type,
+        content: m.content,
+        createdAt: toISO(m.createdAt),
+        imageUrl: type === 'image' && m.content ? m.content : undefined,
+        spotPayload,
+      }
+    })
     sessions.value[sessionId] = list
   }
 
@@ -105,6 +136,15 @@ export const useChatStore = defineStore('chat', () => {
       type: 'companion',
       content: payload.destination,
       companionPayload: payload,
+    })
+  }
+
+  function addSpotCard(sessionId: string, from: 'me' | 'other', payload: ChatSpotPayload) {
+    return appendMessage(sessionId, {
+      from,
+      type: 'spot',
+      content: `分享了一个景点：${payload.name}`,
+      spotPayload: payload,
     })
   }
 
@@ -144,6 +184,7 @@ export const useChatStore = defineStore('chat', () => {
     addTextMessage,
     addRouteCard,
     addCompanionCard,
+    addSpotCard,
     addImageMessage,
     addSystemTip,
     markFailed,

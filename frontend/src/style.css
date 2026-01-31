@@ -27,3 +27,18 @@ body {
   min-height: 100vh;
 }
 
+/* 动态页（Feed）统一视觉变量 */
+:root {
+  --feed-bg: #f5f7fa;
+  --feed-max-width: 1200px;
+  --feed-card-radius: 14px;
+  --feed-card-radius-inner: 12px;
+  --feed-img-radius: 10px;
+  --feed-gap: 20px;
+  --feed-card-padding: 16px;
+  --feed-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  --feed-shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --feed-content-font-size: 15px;
+  --feed-content-line-height: 1.7;
+  --feed-avatar-size: 40px;
+}

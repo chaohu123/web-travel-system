@@ -6,18 +6,18 @@ import type { CompanionPostSummary } from '../api'
 import type { FeedItem } from '../api'
 import type { NoteSummary } from '../api'
 
+/** 与左侧 el-menu 顺序一致：我的动态 → 我的游记 → 我的路线 → 我的结伴 → 我的收藏 → 我的消息(跳转) → 账号与安全 */
 export type ProfileTab =
-  | 'info'
+  | 'feeds'
+  | 'notes'
   | 'routes'
   | 'companion'
   | 'favorites'
-  | 'feeds'
-  | 'settings'
   | 'security'
 
-/** type 与后端 targetType 一致：note / route / companion / feed */
+/** type 与后端 targetType 一致：note / route / companion / feed / spot */
 export interface FavoriteItem {
-  type: 'note' | 'route' | 'companion' | 'feed'
+  type: 'note' | 'route' | 'companion' | 'feed' | 'spot'
   id: number
   title?: string
   destination?: string
@@ -31,6 +31,7 @@ export const useProfileStore = defineStore('profile', () => {
   const myRoutes = ref<PlanResponse[]>([])
   const myCompanion = ref<CompanionPostSummary[]>([])
   const myFeeds = ref<FeedItem[]>([])
+  const myNotes = ref<NoteSummary[]>([])
   const favorites = ref<FavoriteItem[]>([])
   const loading = ref(false)
 
@@ -68,6 +69,10 @@ export const useProfileStore = defineStore('profile', () => {
     myFeeds.value = list
   }
 
+  function setMyNotes(list: NoteSummary[]) {
+    myNotes.value = list
+  }
+
   function setFavorites(list: FavoriteItem[]) {
     favorites.value = list
   }
@@ -80,11 +85,16 @@ export const useProfileStore = defineStore('profile', () => {
     myFeeds.value = myFeeds.value.filter((f) => f.id !== id)
   }
 
+  function removeNote(id: number) {
+    myNotes.value = myNotes.value.filter((n) => n.id !== id)
+  }
+
   return {
     me,
     myRoutes,
     myCompanion,
     myFeeds,
+    myNotes,
     favorites,
     loading,
     reputationLevelLabel,
@@ -93,8 +103,10 @@ export const useProfileStore = defineStore('profile', () => {
     setMyRoutes,
     setMyCompanion,
     setMyFeeds,
+    setMyNotes,
     setFavorites,
     removeFavorite,
     removeFeed,
+    removeNote,
   }
 })

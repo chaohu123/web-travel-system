@@ -38,6 +38,10 @@ const loading = ref(false)
 const posts = ref<CompanionPostSummary[]>([])
 const appliedPostIds = ref<Set<number>>(new Set())
 
+/** 分页配置 */
+const pageSize = ref(6)
+const companionPage = ref(1)
+
 /** 热门目的地（占位，可后续从接口拉取） */
 const hotDestinations = ['北京', '上海', '成都', '西安', '杭州', '厦门', '云南', '西藏']
 
@@ -79,7 +83,7 @@ const filteredPosts = computed(() => {
     if (dayRange.value.length > 0) {
       const match = dayRange.value.some((idx) => {
         const opt = DAY_OPTIONS[idx]
-        return days >= opt.min && days <= opt.max
+        return opt && days >= opt.min && days <= opt.max
       })
       if (!match) return false
     }
@@ -89,6 +93,19 @@ const filteredPosts = computed(() => {
     return true
   })
 })
+
+/** 当前页要展示的列表（分页切片） */
+const paginatedPosts = computed(() => {
+  const list = filteredPosts.value
+  const start = (companionPage.value - 1) * pageSize.value
+  return list.slice(start, start + pageSize.value)
+})
+
+const companionTotal = computed(() => filteredPosts.value.length)
+
+function onCompanionPageChange(p: number) {
+  companionPage.value = p
+}
 
 function getTripDays(p: CompanionPostSummary): number {
   if (!p.startDate || !p.endDate) return 0
@@ -174,7 +191,9 @@ function postTags(p: CompanionPostSummary): string[] {
   return tags
 }
 
-watch(isMyList, () => fetchList(), { immediate: false })
+watch(isMyList, () => { companionPage.value = 1; fetchList() }, { immediate: false })
+watch([destination, dateRange, dayRange, travelStyles, budgetRange, posts], () => { companionPage.value = 1 })
+watch(pageSize, () => { companionPage.value = 1 })
 onMounted(fetchList)
 </script>
 
@@ -198,7 +217,7 @@ onMounted(fetchList)
       </div>
     </header>
 
-    <div class="page-body">
+    <div class="page-body" :class="{ 'page-body--full': isMyList }">
       <!-- 2. 左侧筛选栏 Sticky -->
       <aside v-if="!isMyList" class="filter-sidebar">
         <div class="filter-card">
@@ -314,15 +333,17 @@ onMounted(fetchList)
 
       <!-- 3. 右侧卡片流 -->
       <main class="card-stream">
-        <!-- 加载：骨架屏 -->
+        <!-- 加载：骨架屏（同三列网格） -->
         <template v-if="loading">
-          <div v-for="i in 6" :key="i" class="companion-card skeleton-card">
-            <div class="skeleton-avatar" />
-            <div class="skeleton-line long" />
-            <div class="skeleton-line short" />
-            <div class="skeleton-chips" />
-            <div class="skeleton-desc" />
-            <div class="skeleton-btns" />
+          <div class="card-list-grid">
+            <div v-for="i in 6" :key="i" class="companion-card skeleton-card">
+              <div class="skeleton-avatar" />
+              <div class="skeleton-line long" />
+              <div class="skeleton-line short" />
+              <div class="skeleton-chips" />
+              <div class="skeleton-desc" />
+              <div class="skeleton-btns" />
+            </div>
           </div>
         </template>
 
@@ -338,61 +359,75 @@ onMounted(fetchList)
           </ElEmpty>
         </div>
 
-        <!-- 卡片列表 -->
-        <article
-          v-else
-          v-for="post in filteredPosts"
-          :key="post.id"
-          class="companion-card"
-        >
-          <div class="card-top">
-            <div class="user-cell">
-              <div class="avatar-wrap">
-                <img
-                  v-if="post.creatorAvatar"
-                  :src="post.creatorAvatar"
-                  :alt="post.creatorNickname"
-                  class="avatar"
-                />
-                <span v-else class="avatar-placeholder">{{ (post.creatorNickname || '旅').charAt(0) }}</span>
-              </div>
-              <div class="user-meta">
-                <span class="nickname">{{ post.creatorNickname || '旅友' }}</span>
-                <ElTag size="small" type="warning" effect="plain" class="reputation-badge">
-                  {{ reputationLabel(post.creatorReputationLevel) }}
-                </ElTag>
-              </div>
-            </div>
-          </div>
-
-          <div class="card-trip">
-            <h3 class="trip-dest">{{ post.destination }}</h3>
-            <p class="trip-date">
-              {{ post.startDate }} – {{ post.endDate }}
-              <span class="trip-days">{{ getTripDays(post) }} 天</span>
-            </p>
-          </div>
-
-          <div class="card-tags">
-            <span v-for="tag in postTags(post)" :key="tag" class="trip-tag">{{ tag }}</span>
-          </div>
-
-          <p class="card-desc">{{ (post.expectedMateDesc || '一起结伴，开心出行～').slice(0, 60) }}{{ (post.expectedMateDesc && post.expectedMateDesc.length > 60) ? '…' : '' }}</p>
-
-          <div class="card-actions">
-            <ElButton size="default" @click="viewDetail(post)">
-              查看详情
-            </ElButton>
-            <ElButton
-              type="primary"
-              size="default"
-              :disabled="appliedPostIds.has(post.id)"
-              @click="applyCompanion(post)"
+        <!-- 卡片列表：一行 3 个均匀分布 -->
+        <template v-else>
+          <div class="card-list-grid">
+            <article
+              v-for="post in paginatedPosts"
+              :key="post.id"
+              class="companion-card"
             >
-              {{ appliedPostIds.has(post.id) ? '已申请' : '申请结伴' }}
-            </ElButton>
+              <div class="card-top">
+                <div class="user-cell">
+                  <div class="avatar-wrap">
+                    <img
+                      v-if="post.creatorAvatar"
+                      :src="post.creatorAvatar"
+                      :alt="post.creatorNickname"
+                      class="avatar"
+                    />
+                    <span v-else class="avatar-placeholder">{{ (post.creatorNickname || '旅').charAt(0) }}</span>
+                  </div>
+                  <div class="user-meta">
+                    <span class="nickname">{{ post.creatorNickname || '旅友' }}</span>
+                    <ElTag size="small" type="warning" effect="plain" class="reputation-badge">
+                      {{ reputationLabel(post.creatorReputationLevel) }}
+                    </ElTag>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card-trip">
+                <h3 class="trip-dest">{{ post.destination }}</h3>
+                <p class="trip-date">
+                  {{ post.startDate }} – {{ post.endDate }}
+                  <span class="trip-days">{{ getTripDays(post) }} 天</span>
+                </p>
+              </div>
+
+              <div class="card-tags">
+                <span v-for="tag in postTags(post)" :key="tag" class="trip-tag">{{ tag }}</span>
+              </div>
+
+              <p class="card-desc">{{ (post.expectedMateDesc || '一起结伴，开心出行～').slice(0, 60) }}{{ (post.expectedMateDesc && post.expectedMateDesc.length > 60) ? '…' : '' }}</p>
+
+              <div class="card-actions">
+                <ElButton size="default" @click="viewDetail(post)">
+                  查看详情
+                </ElButton>
+                <ElButton
+                  type="primary"
+                  size="default"
+                  :disabled="appliedPostIds.has(post.id)"
+                  @click="applyCompanion(post)"
+                >
+                  {{ appliedPostIds.has(post.id) ? '已申请' : '申请结伴' }}
+                </ElButton>
+              </div>
+            </article>
           </div>
-        </article>
+          <!-- 分页组件 -->
+          <div v-if="companionTotal > 0" class="pagination-wrap">
+            <el-pagination
+              v-model:current-page="companionPage"
+              v-model:page-size="pageSize"
+              :total="companionTotal"
+              :page-sizes="[6, 12, 18, 24]"
+              layout="total, sizes, prev, pager, next, jumper"
+              background
+            />
+          </div>
+        </template>
       </main>
     </div>
   </div>
@@ -460,6 +495,11 @@ onMounted(fetchList)
   grid-template-columns: 280px 1fr;
   gap: 24px;
   align-items: start;
+}
+
+/* 我的结伴模式：无左侧筛选栏，全宽显示 */
+.page-body--full {
+  grid-template-columns: 1fr;
 }
 
 @media (max-width: 1024px) {
@@ -582,14 +622,51 @@ onMounted(fetchList)
   flex: 1;
 }
 
-/* ----- 右侧卡片流 ----- */
+/* ----- 右侧卡片流：上方网格一行 3 个，下方分页 ----- */
 .card-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+
+.card-list-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  align-items: stretch;
+}
+
+@media (max-width: 1024px) {
+  .card-list-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .card-list-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pagination-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 28px 0 16px;
+  margin-top: 8px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.pagination-total {
+  font-size: 14px;
+  color: #64748b;
 }
 
 .companion-card {
+  min-width: 0;
   background: #fff;
   border-radius: 16px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
@@ -598,6 +675,7 @@ onMounted(fetchList)
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  overflow: hidden;
 }
 
 .companion-card:hover {
@@ -717,12 +795,15 @@ onMounted(fetchList)
 
 .card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: auto;
+  min-width: 0;
 }
 
 .card-actions .el-button {
   flex: 1;
+  min-width: 80px;
 }
 
 /* ----- 骨架屏 ----- */

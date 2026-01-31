@@ -10,13 +10,19 @@ import type {
   UpdateProfileRequest,
   PlanResponse,
   CreatePlanRequest,
+  AiGenerateRouteRequest,
+  AiGenerateRouteResponse,
+  RouteGenerateForm,
   CompanionPostSummary,
   CompanionPostDetail,
+  PostChatMessageItem,
+  MyTeamMessageItem,
   NoteSummary,
   FeedItem,
   CommentItem,
   UserPublicProfile,
   FollowingItem,
+  FollowerItem,
   PageResult,
   InteractionSummary,
   InteractionMessageDTO,
@@ -41,7 +47,9 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    // 未认证(401)或 Spring Security 默认返回的禁止(403)均视为需重新登录，统一跳转登录页
+    const status = err.response?.status
+    if (status === 401 || status === 403) {
       const auth = useAuthStore()
       auth.clearAuth()
       if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
@@ -99,10 +107,19 @@ export const messageApi = {
   clearConversationUnread(conversationId: number) {
     return api.post<ApiResponse<void>>(`/messages/conversations/${conversationId}/clear-unread`, {}).then(unwrap)
   },
-  /** 发送私信 - POST /api/messages/chat/{peerUserId} */
-  sendChatMessage(peerUserId: number, content: string) {
+  /** 发送私信 - POST /api/messages/chat/{peerUserId}，type=image 时 content 为图片 base64；type=spot 时需传 spotJson */
+  sendChatMessage(
+    peerUserId: number,
+    content: string,
+    type: 'text' | 'image' | 'spot' = 'text',
+    spotJson?: string
+  ) {
     return api
-      .post<ApiResponse<ChatMessageItemDTO>>(`/messages/chat/${peerUserId}`, { content })
+      .post<ApiResponse<ChatMessageItemDTO>>(`/messages/chat/${peerUserId}`, {
+        content,
+        type,
+        spotJson: type === 'spot' ? spotJson : undefined,
+      })
       .then(unwrap)
   },
   /** 获取与指定用户的私信消息列表 - GET /api/messages/chat/{peerUserId}/messages */
@@ -114,6 +131,10 @@ export const messageApi = {
   /** 进入与指定用户的聊天页时清空该会话未读数 - POST /api/messages/chat/{peerUserId}/clear-unread */
   clearChatUnread(peerUserId: number) {
     return api.post<ApiResponse<void>>(`/messages/chat/${peerUserId}/clear-unread`, {}).then(unwrap)
+  },
+  /** 删除会话（仅对自己隐藏，对方仍可见） */
+  deleteConversation(conversationId: number) {
+    return api.delete<ApiResponse<void>>(`/messages/conversations/${conversationId}`).then(unwrap)
   },
 }
 
@@ -132,6 +153,10 @@ export const userApi = {
   /** 我关注的人列表（用于邀请成员等） */
   myFollowing() {
     return api.get<ApiResponse<FollowingItem[]>>('/users/me/following').then(unwrap)
+  },
+  /** 我的粉丝列表（关注我的人） */
+  myFollowers() {
+    return api.get<ApiResponse<FollowerItem[]>>('/users/me/followers').then(unwrap)
   },
   /** 关注某个用户 */
   follow(userId: number) {
@@ -175,13 +200,59 @@ export const routesApi = {
   getOne(id: number) {
     return api.get<ApiResponse<PlanResponse>>(`/routes/${id}`).then(unwrap)
   },
+  delete(id: number) {
+    return api.delete<ApiResponse<void>>(`/routes/${id}`).then(unwrap)
+  },
   create(body: CreatePlanRequest) {
     return api.post<ApiResponse<number>>('/routes', body).then(unwrap)
   },
+  /** AI 生成路线方案（不落库，返回多方案供前端展示） */
+  aiGenerate(body: AiGenerateRouteRequest) {
+    return api.post<ApiResponse<AiGenerateRouteResponse>>('/routes/ai-generate', body).then(unwrap)
+  },
+}
+
+/** 从 RouteGenerateForm + 日期人数 构建 AI 生成请求体 */
+export function buildAiGenerateRequest(
+  form: RouteGenerateForm,
+  startDate: string,
+  endDate: string,
+  peopleCount: number = 2
+): AiGenerateRouteRequest {
+  return {
+    departureCity: form.startCity || undefined,
+    destinations: form.destinations,
+    startDate,
+    endDate,
+    totalBudget: form.budget,
+    peopleCount,
+    transport: form.transportType === 'car' ? 'drive' : form.transportType,
+    intensity: form.pace === 'easy' ? 'relaxed' : form.pace === 'hard' ? 'high' : 'moderate',
+    interestWeightsJson: JSON.stringify(form.interests),
+  }
 }
 
 /** 结伴 */
 export const companionApi = {
+  /** 发布结伴帖，返回新帖子 id */
+  publish(body: {
+    destination: string
+    startDate: string
+    endDate: string
+    minPeople?: number
+    maxPeople?: number
+    budgetMin?: number | null
+    budgetMax?: number | null
+    expectedMateDesc?: string | null
+    visibility?: string
+    relatedPlanId?: number | null
+  }) {
+    return api.post<ApiResponse<number>>('/companion/posts', body).then(unwrap)
+  },
+  /** 为结伴帖创建小队（发起人自动成为队长并加入），返回小队 id */
+  createTeam(postId: number) {
+    return api.post<ApiResponse<number>>('/companion/teams', undefined, { params: { postId } }).then(unwrap)
+  },
   listPosts(params?: { destination?: string; startDate?: string; endDate?: string }) {
     return api.get<ApiResponse<CompanionPostSummary[]>>('/companion/posts', { params }).then(unwrap)
   },
@@ -194,6 +265,10 @@ export const companionApi = {
   /** 智能推荐结伴活动（根据登录用户标签或热度） */
   recommend(limit: number = 3) {
     return api.get<ApiResponse<CompanionPostSummary[]>>('/companion/posts/recommend', { params: { limit } }).then(unwrap)
+  },
+  /** 删除结伴帖（仅创建者可删） */
+  deletePost(id: number) {
+    return api.delete<ApiResponse<void>>(`/companion/posts/${id}`).then(unwrap)
   },
   /** 小队详情 */
   getTeam(teamId: number) {
@@ -214,6 +289,35 @@ export const companionApi = {
   /** 队长将小队分享给指定用户，被分享人可查看该行程 */
   shareTeam(teamId: number, userId: number) {
     return api.post<ApiResponse<void>>(`/companion/teams/${teamId}/share`, {}, { params: { userId } }).then(unwrap)
+  },
+  /** 获取结伴帖内置沟通消息列表（任何人可读） */
+  getPostChatMessages(postId: number) {
+    return api.get<ApiResponse<PostChatMessageItem[]>>(`/companion/posts/${postId}/chat/messages`).then(unwrap)
+  },
+  /** 发送结伴帖内置沟通消息（需登录且为发起人或已加入小队成员）；可选 type=spot/image/route/companion 及对应 JSON */
+  sendPostChatMessage(
+    postId: number,
+    content: string,
+    options?: {
+      type?: 'text' | 'spot' | 'image' | 'route' | 'companion'
+      spotJson?: string
+      routeJson?: string
+      companionJson?: string
+    }
+  ) {
+    return api
+      .post<ApiResponse<PostChatMessageItem>>(`/companion/posts/${postId}/chat`, {
+        content,
+        type: options?.type,
+        spotJson: options?.spotJson,
+        routeJson: options?.routeJson,
+        companionJson: options?.companionJson,
+      })
+      .then(unwrap)
+  },
+  /** 当前用户加入的小队及最近聊天预览（消息中心「小队消息」） */
+  getMyTeamMessages() {
+    return api.get<ApiResponse<MyTeamMessageItem[]>>('/companion/me/teams').then(unwrap)
   },
 }
 

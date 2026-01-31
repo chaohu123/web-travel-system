@@ -149,6 +149,20 @@ export const useMessageStore = defineStore('message', () => {
     }
   }
 
+  /** 删除会话（仅对自己隐藏，从列表中移除） */
+  async function deleteConversation(conversationId: number) {
+    await messageApi.deleteConversation(conversationId)
+    const idx = conversations.value.findIndex((c) => c.id === conversationId)
+    if (idx >= 0) {
+      const convo = conversations.value[idx]
+      if (convo.unreadCount && totalUnread.value > 0) {
+        totalUnread.value = Math.max(0, totalUnread.value - convo.unreadCount)
+      }
+      conversations.value = conversations.value.filter((c) => c.id !== conversationId)
+      convoTotal.value = Math.max(0, convoTotal.value - 1)
+    }
+  }
+
   return {
     // state
     totalUnread,
@@ -173,6 +187,7 @@ export const useMessageStore = defineStore('message', () => {
     markInteractionRead,
     markAllInteractionRead,
     clearConversationUnread,
+    deleteConversation,
   }
 }
 )

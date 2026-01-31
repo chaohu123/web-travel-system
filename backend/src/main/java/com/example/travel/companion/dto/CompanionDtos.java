@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 @Data
 public class CompanionDtos {
@@ -99,6 +100,43 @@ public class CompanionDtos {
         private Integer budgetMin;
         private Integer budgetMax;
         private java.util.List<TeamMemberItem> members;
+    }
+
+    /** 结伴帖内置沟通单条消息（供前端展示） */
+    @Data
+    public static class PostChatMessageItem {
+        private Long id;
+        private Long userId;
+        private String authorNickname;
+        private String content;
+        private String type;
+        private String spotJson;
+        private String routeJson;
+        private String companionJson;
+        private LocalDateTime createdAt;
+    }
+
+    /** 发送结伴帖内置聊天消息的请求体 */
+    @Data
+    public static class SendPostChatRequest {
+        /** 文本消息时必填；图片时为 base64；景点/路线/结伴时为摘要文案 */
+        private String content;
+        /** 消息类型：text / spot / image / route / companion */
+        private String type;
+        private String spotJson;
+        private String routeJson;
+        private String companionJson;
+    }
+
+    /** 消息中心「小队消息」：当前用户所在小队及该帖最近一条聊天预览 */
+    @Data
+    public static class MyTeamMessageItem {
+        private Long teamId;
+        private Long postId;
+        private String destination;
+        private String lastMessagePreview;
+        private LocalDateTime lastMessageTime;
+        private Integer memberCount;
     }
 }
 

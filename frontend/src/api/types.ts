@@ -91,6 +91,17 @@ export interface FollowingItem {
   userId: number
   nickname: string
   avatar?: string | null
+  /** 关注时间（ISO 字符串） */
+  createdAt?: string
+}
+
+/** 我的粉丝（关注我的人） */
+export interface FollowerItem {
+  userId: number
+  nickname: string
+  avatar?: string | null
+  /** 被关注时间（ISO 字符串） */
+  followedAt?: string
 }
 
 /** 路线 */
@@ -133,6 +144,73 @@ export interface CreatePlanRequest {
   peopleCount: number
   pace: string
   preferenceWeightsJson?: string
+  /** 可选：每日行程（含活动），保存后路线详情页可展示完整行程 */
+  days?: TripPlanDay[]
+}
+
+/**
+ * 路线规划页表单数据结构（与页面 UI 一一对应）
+ * 用于 AI 智能生成旅行路线
+ */
+export interface RouteGenerateForm {
+  startCity: string
+  destinations: string[]
+  budget: number
+  transportType: 'public' | 'car' | 'mixed'
+  pace: 'easy' | 'medium' | 'hard'
+  interests: {
+    nature: number
+    culture: number
+    food: number
+    shopping: number
+    relax: number
+  }
+}
+
+/** AI 生成路线请求（不落库），可由 RouteGenerateForm 转换 */
+export interface AiGenerateRouteRequest {
+  departureCity?: string
+  destinations: string[]
+  startDate: string
+  endDate: string
+  totalBudget?: number
+  peopleCount?: number
+  transport?: string
+  intensity?: string
+  interestWeightsJson?: string
+}
+
+/** AI 生成：单日内的 POI 项（与后端 AiPoiItem 对齐），含可选经纬度供地图展示 */
+export interface AiPoiItem {
+  id: string
+  image: string
+  name: string
+  stayMinutes: number
+  tags: string[]
+  lng?: number
+  lat?: number
+}
+
+/** AI 生成：单日行程（与后端 AiDayPlan 对齐） */
+export interface AiDayPlan {
+  dayIndex: number
+  date: string
+  durationMinutes: number
+  distanceKm: number
+  commuteMinutes: number
+  items: AiPoiItem[]
+}
+
+/** AI 生成：一个方案（与后端 AiPlanVariant 对齐） */
+export interface AiPlanVariant {
+  id: string
+  name: string
+  days: AiDayPlan[]
+}
+
+/** AI 生成路线响应 */
+export interface AiGenerateRouteResponse {
+  variants: AiPlanVariant[]
 }
 
 /** 结伴 PostSummary */
@@ -190,6 +268,39 @@ export interface TeamDetail {
   budgetMin?: number | null
   budgetMax?: number | null
   members: TeamMemberItem[]
+}
+
+/** 结伴帖内置沟通单条消息（后端返回） */
+export interface PostChatMessageItem {
+  id: number
+  userId: number
+  authorNickname: string
+  content: string
+  type?: 'text' | 'spot' | 'image' | 'route' | 'companion'
+  spotJson?: string | null
+  routeJson?: string | null
+  companionJson?: string | null
+  createdAt: string
+}
+
+/** 小队群聊中「景点卡片」的 payload（与 spotJson 一致） */
+export interface TeamChatSpotPayload {
+  routeId: number
+  dayIndex: number
+  activityIndex: number
+  name: string
+  location?: string
+  imageUrl?: string
+}
+
+/** 消息中心「小队消息」：当前用户所在小队及该帖最近一条聊天预览 */
+export interface MyTeamMessageItem {
+  teamId: number
+  postId: number | null
+  destination: string
+  lastMessagePreview: string
+  lastMessageTime: string | null
+  memberCount: number
 }
 
 /** 游记摘要 */
@@ -297,6 +408,7 @@ export interface ChatMessageItemDTO {
   senderId: number
   content: string
   type: string
+  spotJson?: string | null
   createdAt: string
 }
 

@@ -100,12 +100,35 @@ const poiCount = computed(() => {
   return days.reduce((sum, d) => sum + (d.activities?.length || 0), 0)
 })
 const totalCost = computed(() => plan.value?.budget ?? 0)
+/** 日均游玩时长（小时）：有每日行程时按活动数估算，否则占位 6h，且不超过 24 */
 const avgPlayHours = computed(() => {
-  // 没有真实时长字段：按“每天 6 小时”做展示占位（可后续从后端补充）
-  const d = totalDays.value || 0
-  if (!d) return 0
-  return Math.round((d * 6) * 10) / 10
+  const days = plan.value?.days || []
+  if (!days.length) return 6
+  let totalMinutes = 0
+  let dayCount = 0
+  for (const d of days) {
+    const acts = d.activities || []
+    if (!acts.length) continue
+    dayCount += 1
+    for (const a of acts) {
+      const mins = parseActivityMinutes(a)
+      totalMinutes += mins
+    }
+  }
+  if (dayCount === 0) return 6
+  const avgMinutes = totalMinutes / dayCount
+  const avgH = avgMinutes / 60
+  return Math.min(24, Math.round(avgH * 10) / 10)
 })
+function parseActivityMinutes(a: TripPlanActivity): number {
+  if (a.startTime && a.endTime) {
+    const [sh, sm] = a.startTime.split(':').map(Number)
+    const [eh, em] = a.endTime.split(':').map(Number)
+    const mins = (eh * 60 + em) - (sh * 60 + sm)
+    if (mins > 0) return mins
+  }
+  return 60
+}
 const totalDistance = computed(() => {
   // 无距离字段：展示占位（可后续改为真实里程）
   const count = poiCount.value

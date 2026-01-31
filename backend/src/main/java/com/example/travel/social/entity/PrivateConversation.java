@@ -46,6 +46,12 @@ public class PrivateConversation {
 
     private Boolean user2Pinned = false;
 
+    /** 用户1 删除会话时间（软删除，仅对该用户隐藏） */
+    private LocalDateTime user1DeletedAt;
+
+    /** 用户2 删除会话时间（软删除，仅对该用户隐藏） */
+    private LocalDateTime user2DeletedAt;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

@@ -9,7 +9,7 @@ import { interactionsApi } from '../api'
 
 const props = withDefaults(
   defineProps<{
-    cover: string
+    cover?: string
     title: string
     authorAvatar: string
     authorName: string
@@ -31,6 +31,7 @@ const props = withDefaults(
     liked?: boolean
   }>(),
   {
+    cover: '',
     type: 'note',
     targetId: undefined,
     noteId: undefined,
@@ -93,8 +94,8 @@ function handleClick() {
       router.push({ name: 'companion-detail', params: { id: finalId } })
       break
     case 'feed':
-      // 目前动态是列表页，没有单独详情，这里统一落到社区/动态页
-      router.push({ name: 'feed' })
+      // 跳转到动态页并定位到该帖
+      router.push({ name: 'feed', query: { scrollTo: `feed-${finalId}` } })
       break
     case 'note':
     default:
@@ -144,7 +145,7 @@ async function toggleLike(event: Event) {
     @click="handleClick"
   >
     <div class="aspect-[16/10] bg-slate-200 overflow-hidden">
-      <img :src="cover" :alt="title" class="w-full h-full object-cover" />
+      <img :src="cover || 'https://picsum.photos/seed/card/400/250'" :alt="title" class="w-full h-full object-cover" />
     </div>
     <div class="p-4">
       <h3 class="font-semibold text-slate-800 line-clamp-2 mb-3" :class="{ 'hover:text-teal-600': noteId != null }">{{ title }}</h3>
