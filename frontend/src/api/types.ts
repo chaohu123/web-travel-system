@@ -334,6 +334,7 @@ export interface FeedItem {
   id: number
   content: string
   imageUrlsJson: string | null
+  authorId?: number
   authorName: string
   createdAt: string
 }

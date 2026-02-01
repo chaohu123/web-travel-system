@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElPagination } from 'element-plus'
 import { useAuthStore } from '../store'
 import { api, companionApi } from '../api'
 import type { CompanionPostSummary } from '../api'
@@ -70,10 +70,15 @@ async function fetchList() {
   }
 }
 
-// 客户端二次筛选：行程天数、旅行风格、预算、年龄、性别、信誉（当前后端无此字段，用占位逻辑）
+// 客户端二次筛选：目的地、行程天数、旅行风格、预算、年龄、性别、信誉（目的地与后端一致，此处兜底）
 const filteredPosts = computed(() => {
   let list = [...posts.value]
   if (isMyList.value) return list
+
+  const destTrim = destination.value.trim()
+  if (destTrim) {
+    list = list.filter((p) => (p.destination || '').includes(destTrim))
+  }
 
   const [budgetMin, budgetMax] = budgetRange.value
   const [ageMin, ageMax] = ageRange.value
@@ -144,6 +149,7 @@ function toggleStyle(s: string) {
 
 function selectHotDest(dest: string) {
   destination.value = dest
+  if (!isMyList.value) fetchList()
 }
 
 // 申请结伴：需登录；创建小队并加入，并标记已申请
@@ -193,12 +199,28 @@ function postTags(p: CompanionPostSummary): string[] {
 
 watch(isMyList, () => { companionPage.value = 1; fetchList() }, { immediate: false })
 watch([destination, dateRange, dayRange, travelStyles, budgetRange, posts], () => { companionPage.value = 1 })
+
+/** 目的地或日期变化时自动请求列表（目的地防抖，避免输入时频繁请求） */
+let destinationFetchTimer: ReturnType<typeof setTimeout> | null = null
+watch(destination, () => {
+  if (isMyList.value) return
+  if (destinationFetchTimer) clearTimeout(destinationFetchTimer)
+  destinationFetchTimer = setTimeout(() => {
+    destinationFetchTimer = null
+    fetchList()
+  }, 400)
+})
+watch(dateRange, () => {
+  if (isMyList.value) return
+  fetchList()
+})
+
 watch(pageSize, () => { companionPage.value = 1 })
 onMounted(fetchList)
 </script>
 
 <template>
-  <div class="companion-page">
+  <div class="companion-page" :class="{ 'companion-page--with-sidebar': !isMyList }">
     <!-- 1. 顶部导航与引导 -->
     <header class="page-header">
       <div class="header-inner">
@@ -217,8 +239,8 @@ onMounted(fetchList)
       </div>
     </header>
 
-    <div class="page-body" :class="{ 'page-body--full': isMyList }">
-      <!-- 2. 左侧筛选栏 Sticky -->
+    <div class="page-body" :class="{ 'page-body--full': isMyList, 'page-body--with-sidebar': !isMyList }">
+      <!-- 2. 左侧筛选栏：固定定位，不随右侧内容变化而移动 -->
       <aside v-if="!isMyList" class="filter-sidebar">
         <div class="filter-card">
           <h3 class="filter-title">筛选条件</h3>
@@ -435,13 +457,21 @@ onMounted(fetchList)
 
 <style scoped>
 .companion-page {
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
   background: linear-gradient(180deg, #f0f9ff 0%, #f8fafc 24%);
   padding-bottom: 48px;
 }
 
+/* 有筛选栏时：整页左内边距，为固定侧栏留出空间 */
+.companion-page--with-sidebar {
+  padding-left: 304px; /* 280 侧栏 + 24 间距 */
+}
+
 /* ----- 顶部 ----- */
 .page-header {
+  flex-shrink: 0;
   background: #fff;
   border-radius: 16px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
@@ -488,13 +518,21 @@ onMounted(fetchList)
 
 /* ----- 主体两栏 ----- */
 .page-body {
+  flex: 1;
+  min-height: 0;
   max-width: 1280px;
   margin: 0 auto;
   padding: 0 24px;
   display: grid;
   grid-template-columns: 280px 1fr;
+  grid-template-rows: 1fr;
   gap: 24px;
-  align-items: start;
+  align-items: stretch;
+}
+
+/* 有筛选栏时：预留左侧空间，主体只占一列 */
+.page-body--with-sidebar {
+  grid-template-columns: 1fr;
 }
 
 /* 我的结伴模式：无左侧筛选栏，全宽显示 */
@@ -506,12 +544,27 @@ onMounted(fetchList)
   .page-body {
     grid-template-columns: 1fr;
   }
+  .companion-page--with-sidebar {
+    padding-left: 0;
+  }
+  .filter-sidebar {
+    position: relative;
+    left: auto;
+    top: auto;
+    width: 100%;
+    max-height: none;
+  }
 }
 
-/* ----- 左侧筛选 ----- */
+/* ----- 左侧筛选：固定定位，始终在视口左侧同一位置 ----- */
 .filter-sidebar {
-  position: sticky;
+  position: fixed;
+  left: 24px;
   top: 24px;
+  width: 280px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  z-index: 10;
 }
 
 .filter-card {
@@ -622,12 +675,14 @@ onMounted(fetchList)
   flex: 1;
 }
 
-/* ----- 右侧卡片流：上方网格一行 3 个，下方分页 ----- */
+/* ----- 右侧卡片流：上方网格一行 3 个，分页固定到底部 ----- */
 .card-stream {
   display: flex;
   flex-direction: column;
   gap: 0;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
 
 .card-list-grid {
@@ -656,8 +711,10 @@ onMounted(fetchList)
   justify-content: center;
   gap: 16px;
   padding: 28px 0 16px;
-  margin-top: 8px;
+  margin-top: auto;
   border-top: 1px solid #e2e8f0;
+  flex-shrink: 0;
+  background: linear-gradient(180deg, transparent 0%, #f8fafc 8%);
 }
 
 .pagination-total {
@@ -870,9 +927,13 @@ onMounted(fetchList)
   100% { background-position: -200% 0; }
 }
 
-/* ----- 空状态 ----- */
+/* ----- 空状态：占满主内容区并居中，避免筛选无结果时样式塌陷 ----- */
 .empty-wrap {
-  grid-column: 1 / -1;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 48px 24px;
 }
 

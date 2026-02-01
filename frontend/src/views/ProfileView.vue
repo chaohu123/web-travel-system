@@ -587,11 +587,12 @@ function getFavoriteTitle(f: FavoriteItem): string {
       <aside class="profile-left">
         <header class="profile-header">
           <div class="header-row-1">
-            <div class="header-avatar-wrap">
+            <div class="header-avatar-wrap" role="button" tabindex="0" @click="editDialogVisible = true" @keydown.enter="editDialogVisible = true">
               <el-avatar :size="72" class="header-avatar">
                 <img v-if="store.me?.avatar" :src="store.me.avatar" alt="avatar" />
                 <span v-else>{{ (store.me?.nickname || auth.nickname || '我').charAt(0) }}</span>
               </el-avatar>
+              <span class="avatar-change-hint">更换头像</span>
             </div>
             <div class="header-name-wrap">
               <h1 class="header-name">{{ store.me?.nickname || auth.nickname || '旅友' }}</h1>
@@ -1193,6 +1194,33 @@ function getFavoriteTitle(f: FavoriteItem): string {
 
 .header-avatar-wrap {
   flex-shrink: 0;
+  position: relative;
+  cursor: pointer;
+  border-radius: 50%;
+  outline: none;
+}
+
+.header-avatar-wrap:hover .avatar-change-hint {
+  opacity: 1;
+}
+
+.header-avatar-wrap:hover .header-avatar {
+  opacity: 0.85;
+}
+
+.avatar-change-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 4px 0;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 0 0 50% 50%;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
 
 .header-avatar {
@@ -1200,6 +1228,7 @@ function getFavoriteTitle(f: FavoriteItem): string {
   color: #fff;
   font-size: 28px;
   font-weight: 600;
+  transition: opacity 0.2s ease;
 }
 
 .header-name-wrap {

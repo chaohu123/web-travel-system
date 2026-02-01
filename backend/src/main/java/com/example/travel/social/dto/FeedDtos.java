@@ -21,6 +21,7 @@ public class FeedDtos {
         private Long id;
         private String content;
         private String imageUrlsJson;
+        private Long authorId;
         private String authorName;
         private LocalDateTime createdAt;
     }

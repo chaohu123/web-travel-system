@@ -15,6 +15,8 @@ export const useAuthStore = defineStore('auth', () => {
   const userId = ref<number | null>(localStorage.getItem('userId') ? Number(localStorage.getItem('userId')) : null)
   const nickname = ref<string | null>(localStorage.getItem('nickname'))
   const reputationLevel = ref<number | null>(localStorage.getItem('reputationLevel') ? Number(localStorage.getItem('reputationLevel')) : null)
+  /** 本会话内已关注的用户 ID（用于动态页关注按钮状态，不持久化） */
+  const followedSessionIds = ref<Set<number>>(new Set())
 
   function setAuth(t: string, uid: number) {
     token.value = t
@@ -32,11 +34,22 @@ export const useAuthStore = defineStore('auth', () => {
     else localStorage.removeItem('reputationLevel')
   }
 
+  function addFollowedSession(uid: number) {
+    followedSessionIds.value = new Set([...followedSessionIds.value, uid])
+  }
+
+  function removeFollowedSession(uid: number) {
+    const next = new Set(followedSessionIds.value)
+    next.delete(uid)
+    followedSessionIds.value = next
+  }
+
   function clearAuth() {
     token.value = null
     userId.value = null
     nickname.value = null
     reputationLevel.value = null
+    followedSessionIds.value = new Set()
     localStorage.removeItem('token')
     localStorage.removeItem('userId')
     localStorage.removeItem('nickname')
@@ -48,8 +61,11 @@ export const useAuthStore = defineStore('auth', () => {
     userId,
     nickname,
     reputationLevel,
+    followedSessionIds,
     setAuth,
     setProfile,
+    addFollowedSession,
+    removeFollowedSession,
     clearAuth,
   }
 })

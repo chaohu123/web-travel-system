@@ -63,7 +63,12 @@ public class FeedService {
         item.setId(post.getId());
         item.setContent(post.getContent());
         item.setImageUrlsJson(post.getImageUrlsJson());
-        item.setAuthorName(post.getUser() != null ? resolveAuthorName(post.getUser()) : "用户");
+        if (post.getUser() != null) {
+            item.setAuthorId(post.getUser().getId());
+            item.setAuthorName(resolveAuthorName(post.getUser()));
+        } else {
+            item.setAuthorName("用户");
+        }
         item.setCreatedAt(post.getCreatedAt());
         return item;
     }

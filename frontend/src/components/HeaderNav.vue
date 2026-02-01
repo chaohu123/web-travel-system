@@ -123,8 +123,6 @@ onBeforeUnmount(() => {
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="/profile">个人主页</el-dropdown-item>
-                <el-dropdown-item command="/" disabled>设置</el-dropdown-item>
-                <el-dropdown-item command="/" disabled>消息</el-dropdown-item>
                 <el-dropdown-item divided command="logout">退出</el-dropdown-item>
               </el-dropdown-menu>
             </template>

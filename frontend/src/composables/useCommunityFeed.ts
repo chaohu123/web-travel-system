@@ -23,6 +23,7 @@ export async function fetchUnifiedDynamicItems(): Promise<UnifiedDynamicItem[]> 
       id: n.id,
       createdAt: n.createdAt || new Date().toISOString(),
       hotScore: (n.likeCount ?? 0) * 2 + (n.commentCount ?? 0),
+      authorId: n.authorId,
       authorName: n.authorName,
       note: n,
     })
@@ -33,6 +34,7 @@ export async function fetchUnifiedDynamicItems(): Promise<UnifiedDynamicItem[]> 
       type: 'feed',
       id: f.id,
       createdAt: f.createdAt,
+      authorId: f.authorId,
       authorName: f.authorName,
       feed: f,
     })
@@ -56,6 +58,7 @@ export async function fetchUnifiedDynamicItems(): Promise<UnifiedDynamicItem[]> 
       type: 'route',
       id: r.id,
       createdAt: r.startDate || new Date().toISOString(),
+      authorId: auth.userId ?? undefined,
       route: r,
     })
   })

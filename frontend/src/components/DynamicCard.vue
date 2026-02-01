@@ -6,7 +6,7 @@ import { CircleCheck, CircleCheckFilled, ChatDotRound, Star, StarFilled, Share }
 import HeartIcon from './HeartIcon.vue'
 import type { UnifiedDynamicItem } from '../api/types'
 import type { CommentItem } from '../api'
-import { commentsApi, interactionsApi } from '../api'
+import { commentsApi, interactionsApi, userApi } from '../api'
 import { useAuthStore, reputationLevelLabel } from '../store'
 
 const props = defineProps<{
@@ -38,6 +38,21 @@ const targetId = computed(() => props.item.id)
 const badgeLabel = computed(() =>
   reputationLevelLabel(props.item.reputationLevel ?? props.item.companion?.creatorReputationLevel ?? undefined)
 )
+
+/** 结伴状态展示：open/OPEN → 报名中，后端可能返回小写 */
+const companionStatusLabel = computed(() => {
+  const s = (props.item.companion?.status ?? '').trim().toLowerCase()
+  if (s === 'open') return '报名中'
+  if (s === 'locked') return '已锁定'
+  if (s === 'closed') return '已结束'
+  return s || '结伴'
+})
+const companionStatusType = computed(() => {
+  const s = (props.item.companion?.status ?? '').trim().toLowerCase()
+  if (s === 'open') return 'success'
+  if (s === 'closed') return 'info'
+  return 'info'
+})
 
 const previewComments = computed(() => comments.value.slice(0, 2))
 
@@ -185,9 +200,33 @@ function goUserProfile() {
   }
 }
 
-function handleFollow() {
-  ensureLogin(() => {
-    ElMessage.info('关注功能需后端接口支持')
+const followLoading = ref(false)
+const isFollowed = computed(() => {
+  const aid = props.item.authorId
+  if (aid == null) return false
+  return auth.followedSessionIds.value.has(aid)
+})
+
+async function handleFollow() {
+  const aid = props.item.authorId
+  if (aid == null) return
+  ensureLogin(async () => {
+    followLoading.value = true
+    try {
+      if (isFollowed.value) {
+        await userApi.unfollow(aid)
+        auth.removeFollowedSession(aid)
+        ElMessage.success('已取消关注')
+      } else {
+        await userApi.follow(aid)
+        auth.addFollowedSession(aid)
+        ElMessage.success('已关注')
+      }
+    } catch (e: any) {
+      ElMessage.error(e?.message ?? (isFollowed.value ? '取消关注失败' : '关注失败'))
+    } finally {
+      followLoading.value = false
+    }
   })
 }
 
@@ -236,8 +275,15 @@ watch(
         <span class="user-time">{{ formatTime(item.createdAt) }}</span>
       </div>
       <div class="user-actions">
-        <el-button v-if="!auth.userId || auth.userId !== item.authorId" size="small" type="primary" plain @click="handleFollow">
-          关注
+        <el-button
+          v-if="item.authorId != null && auth.userId != null && auth.userId !== item.authorId"
+          size="small"
+          :type="isFollowed ? 'default' : 'primary'"
+          plain
+          :loading="followLoading"
+          @click="handleFollow"
+        >
+          {{ isFollowed ? '已关注' : '关注' }}
         </el-button>
         <el-dropdown trigger="click" @command="handleMenuCommand">
           <el-button size="small" text>更多</el-button>
@@ -305,7 +351,7 @@ watch(
         <p v-if="item.companion.budgetMin != null || item.companion.budgetMax != null" class="body-meta">
           预算 ¥{{ item.companion.budgetMin ?? 0 }} - ¥{{ item.companion.budgetMax ?? 0 }}
         </p>
-        <el-tag size="small" :type="item.companion.status === 'OPEN' ? 'success' : 'info'">{{ item.companion.status === 'OPEN' ? '招募中' : item.companion.status || '结伴' }}</el-tag>
+        <el-tag size="small" :type="companionStatusType" effect="plain">{{ companionStatusLabel }}</el-tag>
         <el-button type="primary" text class="btn-full">查看详情</el-button>
       </template>
     </div>
